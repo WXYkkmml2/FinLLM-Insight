@@ -5,8 +5,8 @@
     "embeddings_directory": "./data/processed/embeddings",
     "features_directory": "./data/processed/features",
     "models_directory": "./models",
-    "china_stock_index": "CSI300",
-    "min_year": 2018,
+    "china_stock_index": "CSI300",  # 修改为自定义指数名称，只要50家！！
+    "min_year": 2023,# 修改为更近的起始年份，只保留最近2年！！
     "download_delay": 2,
     "pdf_extraction_method": "pdfplumber",
     "price_start_date": "20180101",
