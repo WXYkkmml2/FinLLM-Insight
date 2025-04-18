@@ -1,94 +1,159 @@
-# FinLLM-Insight
-基于大语言模型的财报分析与股票预测系统
+# GitHub Project Organization Guide for FinLLM-Insight
 
-## 项目简介
-FinLLM-Insight是一个利用大型语言模型(LLM)分析公司年度报告并预测股票投资价值的系统。该项目整合了自然语言处理、检索增强生成(RAG)和机器学习技术，为投资者提供数据驱动的决策支持。
-## 主要特点
-**自动数据获取**：从中国证券市场自动下载上市公司年度报告
-**智能文本分析**：利用大型语言模型深度分析财务报告内容
-**特征工程**：基于LLM分析生成结构化特征
-**投资预测**：预测股票未来表现，提供投资建议
-**交互式查询**：实现基于RAG的智能问答系统，支持对财报内容的交互式探索
+## Directory Structure
 
-## 快速开始
-### 环境要求
+Here's the recommended directory structure for your FinLLM-Insight project:
 
-- Python 3.8+
-- 依赖包: 见`requirements.txt`
-- 
-### 安装
+```
+FinLLM-Insight/
+├── data/                  # Data storage directory
+│   ├── raw/               # Raw data (downloaded annual reports)
+│   └── processed/         # Processed data
+├── notebooks/             # Jupyter notebooks
+│   ├── data_exploration.ipynb        # Data exploration
+│   ├── model_training.ipynb          # Model training
+│   └── results_visualization.ipynb   # Results visualization
+├── src/                   # Source code
+│   ├── data/              # Data processing related code
+│   │   ├── download_reports.py       # Download annual reports
+│   │   ├── convert_formats.py        # Format conversion
+│   │   └── make_targets.py           # Generate target variables
+│   ├── features/          # Feature engineering related code
+│   │   ├── embeddings.py             # Generate embeddings
+│   │   └── llm_features.py           # Generate features using LLM
+│   ├── models/            # Model related code
+│   │   ├── train.py                  # Model training
+│   │   └── predict.py                # Model prediction
+│   └── rag/               # RAG component
+│       └── rag_component.py          # RAG implementation
+├── config/                # Configuration files
+│   └── config.json        # Main configuration file
+├── requirements.txt       # Project dependencies
+├── setup.py               # Installation script
+├── LICENSE                # License file
+└── README.md              # Project documentation
+```
+
+## Setting Up Your GitHub Repository
+
+### Step 1: Creating the Directory Structure
+
+You can create this structure using GitHub web interface or Git command line:
+
+**Using GitHub Web Interface:**
+1. Navigate to your repository
+2. Click "Add file" > "Create new file"
+3. Type directory/filename (e.g., `data/README.md`)
+4. Add content and commit
+
+**Using Git Command Line:**
 ```bash
-# 克隆仓库
-git clone https://github.com/yourusername/FinLLM-Insight.git
+# Clone repository
+git clone https://github.com/WXYkkmml2/FinLLM-Insight.git
 cd FinLLM-Insight
 
-# 安装依赖
-pip install -r requirements.txt
+# Create directory structure
+mkdir -p data/{raw,processed}
+mkdir -p notebooks
+mkdir -p src/{data,features,models,rag}
+mkdir -p config
+
+# Create basic files
+touch README.md
+touch requirements.txt
+touch config/config.json
+
+# Commit changes
+git add .
+git commit -m "Initialize project structure"
+git push origin main
 ```
 
-### 配置
+### Step 2: Adding .gitignore File
 
-在`config/config.json`中配置您的参数:
+Create a `.gitignore` file to exclude unnecessary files:
 
-```json
-{
-    "annual_reports_html_save_directory": "./data/raw/annual_reports",
-    "china_stock_index": "沪深300",
-    "min_year": 2018,
-    "download_delay": 2
-}
+```
+# Data files
+data/raw/
+data/processed/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Virtual environments
+venv/
+ENV/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
 ```
 
-### 使用方法
+### Step 3: Adding a License
 
-#### 方法一: 运行各模块
+Choose an appropriate license for your project (MIT, Apache, GPL, etc.).
 
-```bash
-# 下载年报
-python src/data/download_reports.py --config_path config/config.json
+### Step 4: Enhancing README with Badges
 
-# 生成嵌入向量
-python src/features/embeddings.py --config_path config/config.json
+Add badges to the top of your README to show project status, version, etc.:
 
-# 更多步骤...
+```markdown
+![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Status](https://img.shields.io/badge/status-in%20development-yellow)
 ```
 
-#### 方法二: Jupyter Notebook
+### Step 5: Adding Code Examples
 
-打开`notebooks/`目录下的Jupyter notebooks，跟随其中的说明执行完整流程。
+Include key code snippets and configuration examples in your README to help users quickly understand how to use your project.
 
-## 项目模块说明
+### Step 6: Regular Updates
 
-### 数据获取与预处理
+Regularly update your README and documentation as your project evolves to maintain their relevance.
 
-使用AKShare API获取中国上市公司的财务报告，并进行格式转换和预处理。
+## Best Practices
 
-### 文本嵌入与特征生成
+1. **Clear Module Documentation**: Include docstrings and comments in your code
+2. **Package Requirements**: Keep `requirements.txt` updated with all dependencies
+3. **Version Control**: Use meaningful commit messages
+4. **Branch Management**: Use feature branches for development
+5. **Issue Tracking**: Utilize GitHub Issues for tracking tasks and bugs
 
-将财务报告文本转换为向量表示，并利用大语言模型生成结构化特征。
+## Summary
 
-### 模型训练与评估
+A well-organized GitHub project should have:
+- Clear directory organization
+- Comprehensive README covering project introduction, installation instructions, and key features
+- Sufficient examples and documentation
+- Necessary configuration files and license
 
-基于生成的特征训练预测模型，评估模型性能并生成投资建议。
-
-### RAG问答系统
-
-实现检索增强生成(RAG)系统，支持对财报内容的自然语言查询。
-
-## 实验结果
-
-此处简要展示系统性能和分析结果...
-
-## 贡献指南
-
-欢迎提交Pull Requests或Issues!
-
-## 致谢
-
-本项目受到[GPT-InvestAR](https://github.com/UditGupta10/GPT-InvestAR)的启发，并在此基础上进行了多项改进和创新。
-
-感谢CSC6052/5051/4100/DDA6307/MDS5110 NLP课程的支持。
-
-## 许可证
-
-[MIT License](LICENSE)
+This organization not only helps with project grading but also makes it easier for others to understand and use your project.
