@@ -211,13 +211,13 @@ def make_predictions(model, features_df, model_info=None):
             # Add prediction category based on percentile
             def categorize_prediction(percentile):
                 if percentile < 0.25:
-                    return "很可能下跌"
+                    return "It is likely to fall!!"
                 elif percentile < 0.5:
-                    return "可能小幅下跌"
+                    return "Possible to fall slightly!"
                 elif percentile < 0.75:
-                    return "可能小幅上涨"
+                    return "Probably a slight increase!"
                 else:
-                    return "很可能上涨"
+                    return "It's likely to rise!!"
             
             results_df['prediction_category'] = results_df['prediction_percentile'].apply(categorize_prediction)
         
