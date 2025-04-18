@@ -28,7 +28,55 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
-
+''''
+添加企业筛选逻辑！！！明天做！
+def get_stock_list(index_name):
+    """
+    Get stock list from specified index
+    
+    Args:
+        index_name (str): Name of the index (e.g., 'CSI300' for 沪深300指数)
+        
+    Returns:
+        pd.DataFrame: DataFrame containing stock symbols and names
+    """
+    try:
+        logger.info(f"Retrieving stock list for index: {index_name}")
+        
+        if index_name == "CSI300":
+            # Get CSI300 constituent stocks
+            stock_list = ak.index_stock_cons_csindex(symbol="000300")
+            # Extract stock codes and names
+            stock_list = stock_list[['成分券代码', '成分券名称']]
+            stock_list.columns = ['code', 'name']
+            # Format code to ensure 6 digits with leading zeros
+            stock_list['code'] = stock_list['code'].apply(lambda x: f"{x:06d}")
+        elif index_name == "CSI50":
+            # 自定义处理方式：获取沪深300并只保留前50家
+            stock_list = ak.index_stock_cons_csindex(symbol="000300")
+            # Extract stock codes and names
+            stock_list = stock_list[['成分券代码', '成分券名称']]
+            stock_list.columns = ['code', 'name']
+            # Format code to ensure 6 digits with leading zeros
+            stock_list['code'] = stock_list['code'].apply(lambda x: f"{x:06d}")
+            # Only keep first 50 companies
+            stock_list = stock_list.head(50)
+            logger.info(f"Limited to first 50 companies from CSI300")
+        else:
+            # Default to get all A-share stocks
+            stock_list = ak.stock_info_a_code_name()
+            stock_list.columns = ['code', 'name']
+            # If using default, still limit to first 50 companies
+            stock_list = stock_list.head(50)
+            logger.info(f"Limited to first 50 companies from A-shares")
+        
+        logger.info(f"Retrieved {len(stock_list)} stocks")
+        return stock_list
+    
+    except Exception as e:
+        logger.error(f"Failed to get stock list: {e}")
+        raise
+''''
 def load_config(config_path):
     """
     Load configuration from JSON file
