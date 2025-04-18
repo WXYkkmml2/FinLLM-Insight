@@ -1,8 +1,5 @@
 # FinLLM-Insight
 
-<p align="center">
-    <img src="docs/logo.png" alt="FinLLM-Insight Logo" width="200" height="200" />
-</p>
 
 <p align="center">
     <strong>基于大语言模型的财报分析与股票预测系统</strong>
