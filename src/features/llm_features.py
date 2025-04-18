@@ -334,4 +334,184 @@ def query_llm(client, embedding_func, company_code, year, question, llm_model, m
             response = client.chat.completions.create(
                 model=llm_model,
                 messages=[
-                    {"role": "system",
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.2,
+                max_tokens=2000
+            )
+            
+            response_text = response.choices[0].message.content
+            return response_text
+        
+        # Add support for other LLM APIs as needed
+        else:
+            raise ValueError(f"Unsupported LLM model: {llm_model}")
+    
+    except Exception as e:
+        logger.error(f"Error querying LLM for {company_code} {year}: {e}")
+        return f"LLM查询出错: {str(e)}"
+
+def generate_features(embeddings_dir, output_dir, llm_model, embedding_model, questions_path=None, max_tokens_per_call=12000):
+    """
+    Generate features for all companies using LLM analysis
+    
+    Args:
+        embeddings_dir (str): Directory containing vector database
+        output_dir (str): Directory to save features
+        llm_model (str): LLM model name
+        embedding_model (str): Embedding model name
+        questions_path (str): Path to questions file
+        max_tokens_per_call (int): Maximum tokens per LLM call
+        
+    Returns:
+        pd.DataFrame: Combined features for all companies
+    """
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Load questions
+    questions = load_questions(questions_path)
+    
+    # Connect to vector database
+    client, embedding_func = connect_to_vector_db(embeddings_dir, embedding_model)
+    
+    # Get company collections
+    company_collections = get_company_collections(client)
+    
+    if not company_collections:
+        logger.error("No company collections found in vector database")
+        return None
+    
+    all_features = []
+    
+    # Process each company
+    for collection_name in tqdm(company_collections, desc="Processing companies"):
+        # Extract company code from collection name
+        company_code = collection_name.replace("company_", "")
+        
+        # Get collection
+        collection = client.get_collection(name=collection_name, embedding_function=embedding_func)
+        
+        # Get available years for this company
+        years = set()
+        results = collection.get()
+        
+        if not results or 'metadatas' not in results or not results['metadatas']:
+            logger.warning(f"No data found for company {company_code}")
+            continue
+        
+        for metadata in results['metadatas']:
+            if 'year' in metadata:
+                years.add(metadata['year'])
+        
+        if not years:
+            logger.warning(f"No year information found for company {company_code}")
+            continue
+        
+        # Process each year
+        for year in years:
+            features = {
+                "company_code": company_code,
+                "report_year": year,
+                "analysis_timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            
+            responses = {}
+            
+            # Process each question
+            for question_key, question_data in questions.items():
+                try:
+                    # Get question details
+                    question_text = question_data["question"]
+                    question_type = question_data.get("type", "numeric")
+                    
+                    # Query LLM
+                    logger.info(f"Querying LLM for {company_code} {year} - {question_key}")
+                    response = query_llm(
+                        client=client,
+                        embedding_func=embedding_func,
+                        company_code=company_code,
+                        year=year,
+                        question=question_text,
+                        llm_model=llm_model,
+                        max_tokens_per_call=max_tokens_per_call
+                    )
+                    
+                    # Store full response
+                    responses[question_key] = response
+                    
+                    # Extract structured data
+                    if question_type == "numeric":
+                        score_range = question_data.get("score_range", [1, 10])
+                        score = extract_score_from_response(response, score_range)
+                        features[f"{question_key}_score"] = score
+                    
+                    elif question_type == "categorical":
+                        categories = question_data.get("categories", [])
+                        category = extract_category_from_response(response, categories)
+                        features[f"{question_key}_category"] = category
+                    
+                    # Add delay to avoid rate limits
+                    time.sleep(1)
+                
+                except Exception as e:
+                    logger.error(f"Error processing question {question_key} for {company_code} {year}: {e}")
+                    continue
+            
+            # Store full responses in a separate file
+            responses_dir = os.path.join(output_dir, "responses")
+            os.makedirs(responses_dir, exist_ok=True)
+            
+            responses_file = os.path.join(responses_dir, f"{company_code}_{year}_responses.json")
+            with open(responses_file, 'w', encoding='utf-8') as f:
+                json.dump(responses, f, ensure_ascii=False, indent=2)
+            
+            # Add to features list
+            all_features.append(features)
+    
+    if not all_features:
+        logger.error("No features generated for any company")
+        return None
+    
+    # Combine all features
+    features_df = pd.DataFrame(all_features)
+    
+    # Save features
+    features_path = os.path.join(output_dir, "llm_features.csv")
+    features_df.to_csv(features_path, index=False, encoding='utf-8-sig')
+    
+    logger.info(f"Generated features for {len(features_df)} reports. Saved to {features_path}")
+    return features_df
+
+def main():
+    """Main function to run the feature generation process"""
+    parser = argparse.ArgumentParser(description='Generate features from annual reports using LLM')
+    parser.add_argument('--config_path', type=str, default='config/config.json', 
+                        help='Path to configuration file')
+    parser.add_argument('--questions_path', type=str, default='config/questions.json',
+                        help='Path to questions file')
+    args = parser.parse_args()
+    
+    # Load configuration
+    config = load_config(args.config_path)
+    
+    # Get parameters
+    embeddings_dir = config.get('embeddings_directory', './data/processed/embeddings')
+    output_dir = config.get('features_directory', './data/processed/features')
+    llm_model = config.get('llm_model', 'gpt-3.5-turbo-16k')
+    embedding_model = config.get('embedding_model', 'BAAI/bge-large-zh-v1.5')
+    max_tokens_per_call = config.get('max_tokens_per_call', 12000)
+    
+    # Generate features
+    generate_features(
+        embeddings_dir=embeddings_dir,
+        output_dir=output_dir,
+        llm_model=llm_model,
+        embedding_model=embedding_model,
+        questions_path=args.questions_path,
+        max_tokens_per_call=max_tokens_per_call
+    )
+
+if __name__ == "__main__":
+    main()
