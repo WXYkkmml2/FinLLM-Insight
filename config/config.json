@@ -1,1 +1,21 @@
-{\n    "annual_reports_html_save_directory": "./data/raw/annual_reports",\n    "china_stock_index": "CSI300",\n    "min_year": 2018,\n    "download_delay": 2\n}
+{
+    "annual_reports_html_save_directory": "./data/raw/annual_reports",
+    "processed_reports_text_directory": "./data/processed/text_reports",
+    "targets_directory": "./data/processed/targets",
+    "embeddings_directory": "./data/processed/embeddings",
+    "features_directory": "./data/processed/features",
+    "models_directory": "./models",
+    "china_stock_index": "CSI300",
+    "min_year": 2018,
+    "download_delay": 2,
+    "pdf_extraction_method": "pdfplumber",
+    "price_start_date": "20180101",
+    "price_end_date": null,
+    "embedding_model": "BAAI/bge-large-zh-v1.5",
+    "llm_model": "gpt-3.5-turbo-16k",
+    "chunk_size": 1000,
+    "chunk_overlap": 200,
+    "max_tokens_per_call": 12000,
+    "return_windows": [5, 20, 60, 120],
+    "target_window": 60
+}
