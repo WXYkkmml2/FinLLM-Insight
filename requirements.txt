@@ -1,0 +1,1 @@
+pandas\nnumpy\nakshare\nscikit-learn\ntorch\ntransformers\nchroma-db\ntqdm\nmatplotlib\nseaborn

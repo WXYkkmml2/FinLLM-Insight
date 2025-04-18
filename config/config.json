@@ -1,0 +1,1 @@
+{\n    "annual_reports_html_save_directory": "./data/raw/annual_reports",\n    "china_stock_index": "CSI300",\n    "min_year": 2018,\n    "download_delay": 2\n}
