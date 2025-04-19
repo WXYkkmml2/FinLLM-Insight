@@ -212,13 +212,13 @@ def make_predictions(model, features_df, model_info=None):
             # Add prediction category based on percentile
             def categorize_prediction(percentile):
                 if percentile < 0.25:
-                    return "很可能下跌"
+                    return "Strong Decline"
                 elif percentile < 0.5:
-                    return "可能小幅下跌"
+                    return "Slight Decline"
                 elif percentile < 0.75:
-                    return "可能小幅上涨"
+                    return "Slight Growth"
                 else:
-                    return "很可能上涨"
+                    return "Strong Growth"
             
             results_df['prediction_category'] = results_df['prediction_percentile'].apply(categorize_prediction)
         
@@ -294,14 +294,14 @@ def create_prediction_summary(predictions_df, model_info, output_dir, timestamp=
             # Distribution of predicted returns
             sns.histplot(predictions_df[prediction_col], kde=True)
             plt.axvline(x=0, color='red', linestyle='--')
-            plt.title(f'{target_window}日预测收益率分布')
-            plt.xlabel('预测收益率 (%)')
+            plt.title(f'{target_window}-day Predicted Return Distribution')
+            plt.xlabel('Predicted Return (%)')
         else:
             # Distribution of prediction classes
             sns.countplot(x=prediction_col, data=predictions_df)
-            plt.title(f'{target_window}日预测涨跌分布')
-            plt.xlabel('预测涨跌')
-            plt.xticks([0, 1], ['下跌', '上涨'])
+            plt.title(f'{target_window}-day Prediction Distribution')
+            plt.xlabel('Predicted Direction')
+            plt.xticks([0, 1], ['Down', 'Up'])
         
         plt.tight_layout()
         dist_plot_path = os.path.join(viz_dir, f'prediction_distribution_{timestamp}.png')
@@ -314,12 +314,12 @@ def create_prediction_summary(predictions_df, model_info, output_dir, timestamp=
             category_counts = predictions_df['prediction_category'].value_counts()
             
             # Sort categories in logical order
-            category_order = ["很可能下跌", "可能小幅下跌", "可能小幅上涨", "很可能上涨"]
+            category_order = ["Strong Decline", "Slight Decline", "Slight Growth", "Strong Growth"]
             category_counts = category_counts.reindex(category_order)
             
             sns.barplot(x=category_counts.index, y=category_counts.values)
-            plt.title(f'{target_window}日预测分类分布')
-            plt.ylabel('公司数量')
+            plt.title(f'{target_window}-day Prediction Category Distribution')
+            plt.ylabel('Number of Companies')
             plt.xticks(rotation=45)
             plt.tight_layout()
             
@@ -344,9 +344,9 @@ def create_prediction_summary(predictions_df, model_info, output_dir, timestamp=
             bar_colors = ['red' if x < 0 else 'green' for x in top_combined[prediction_col]]
             
             ax = sns.barplot(x=prediction_col, y='company_code', data=top_combined, palette=bar_colors)
-            plt.title(f'预测收益率最高和最低的公司（{target_window}日）')
-            plt.xlabel('预测收益率 (%)')
-            plt.ylabel('公司代码')
+            plt.title(f'Companies with Highest and Lowest Predicted Returns ({target_window}-day)')
+            plt.xlabel('Predicted Return (%)')
+            plt.ylabel('Company Code')
             
             # Add values to bars
             for i, v in enumerate(top_combined[prediction_col]):
@@ -356,24 +356,31 @@ def create_prediction_summary(predictions_df, model_info, output_dir, timestamp=
         else:
             # Show companies with highest confidence
             if hasattr(model, 'predict_proba'):
-                # Get probability predictions
-                proba = model.predict_proba(predictions_df[feature_columns])
-                predictions_df['prediction_confidence'] = np.max(proba, axis=1)
+                # Get feature columns from model info
+                feature_columns = model_info.get('features', [])
                 
-                # Get top confident predictions for each class
-                top_pos = predictions_df[predictions_df[prediction_col] == 1].nlargest(10, 'prediction_confidence')
-                top_neg = predictions_df[predictions_df[prediction_col] == 0].nlargest(10, 'prediction_confidence')
-                
-                # Combine and plot
-                top_combined = pd.concat([top_pos, top_neg])
-                sns.barplot(x='prediction_confidence', y='company_code', hue=prediction_col, data=top_combined)
-                plt.title(f'预测置信度最高的公司（{target_window}日）')
-                plt.xlabel('预测置信度')
-                plt.ylabel('公司代码')
-                plt.legend(['下跌', '上涨'])
+                if feature_columns and all(col in predictions_df.columns for col in feature_columns):
+                    # Get probability predictions
+                    proba = model.predict_proba(predictions_df[feature_columns])
+                    predictions_df['prediction_confidence'] = np.max(proba, axis=1)
+                    
+                    # Get top confident predictions for each class
+                    top_pos = predictions_df[predictions_df[prediction_col] == 1].nlargest(10, 'prediction_confidence')
+                    top_neg = predictions_df[predictions_df[prediction_col] == 0].nlargest(10, 'prediction_confidence')
+                    
+                    # Combine and plot
+                    top_combined = pd.concat([top_pos, top_neg])
+                    sns.barplot(x='prediction_confidence', y='company_code', hue=prediction_col, data=top_combined)
+                    plt.title(f'Companies with Highest Prediction Confidence ({target_window}-day)')
+                    plt.xlabel('Prediction Confidence')
+                    plt.ylabel('Company Code')
+                    plt.legend(['Down', 'Up'])
+                else:
+                    # If features not available in dataframe
+                    plt.text(0.5, 0.5, "Cannot calculate confidence: Missing feature columns", ha='center', va='center', fontsize=14)
             else:
                 # If no probabilities available, just show predictions
-                plt.text(0.5, 0.5, "无置信度数据可用", ha='center', va='center', fontsize=14)
+                plt.text(0.5, 0.5, "No confidence data available", ha='center', va='center', fontsize=14)
         
         plt.tight_layout()
         top_plot_path = os.path.join(viz_dir, f'top_predictions_{timestamp}.png')
@@ -387,7 +394,7 @@ def create_prediction_summary(predictions_df, model_info, output_dir, timestamp=
             f.write(f"""
             <html>
             <head>
-                <title>股票预测结果汇总 - {datetime.now().strftime("%Y-%m-%d")}</title>
+                <title>Stock Prediction Summary - {datetime.now().strftime("%Y-%m-%d")}</title>
                 <meta charset="utf-8">
                 <style>
                     body {{ font-family: Arial, sans-serif; margin: 20px; }}
@@ -404,20 +411,20 @@ def create_prediction_summary(predictions_df, model_info, output_dir, timestamp=
                 </style>
             </head>
             <body>
-                <h1>股票预测结果汇总</h1>
+                <h1>Stock Prediction Summary</h1>
                 <div class="section">
-                    <h2>预测概述</h2>
-                    <p>模型类型: {model_info.get('model_type', 'Unknown')}</p>
-                    <p>模型算法: {model_info.get('model_name', 'Unknown')}</p>
-                    <p>预测时间窗口: {model_info.get('target_window', 60)}天</p>
-                    <p>预测生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
-                    <p>预测公司总数: {len(predictions_df)}</p>
+                    <h2>Prediction Overview</h2>
+                    <p>Model Type: {model_info.get('model_type', 'Unknown')}</p>
+                    <p>Model Algorithm: {model_info.get('model_name', 'Unknown')}</p>
+                    <p>Prediction Window: {model_info.get('target_window', 60)} days</p>
+                    <p>Generation Time: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
+                    <p>Total Companies: {len(predictions_df)}</p>
                 </div>
                 
                 <div class="section">
-                    <h2>预测分布</h2>
+                    <h2>Prediction Distribution</h2>
                     <div class="img-container">
-                        <img src="visualizations/{os.path.basename(dist_plot_path)}" alt="预测分布">
+                        <img src="visualizations/{os.path.basename(dist_plot_path)}" alt="Prediction Distribution">
                     </div>
             """)
             
@@ -425,7 +432,7 @@ def create_prediction_summary(predictions_df, model_info, output_dir, timestamp=
             if model_type == 'regression' and 'prediction_category' in predictions_df.columns:
                 f.write(f"""
                     <div class="img-container">
-                        <img src="visualizations/{os.path.basename(cat_plot_path)}" alt="预测类别分布">
+                        <img src="visualizations/{os.path.basename(cat_plot_path)}" alt="Prediction Category Distribution">
                     </div>
                 """)
             
@@ -433,20 +440,20 @@ def create_prediction_summary(predictions_df, model_info, output_dir, timestamp=
                 </div>
                 
                 <div class="section">
-                    <h2>最突出的预测</h2>
+                    <h2>Top Predictions</h2>
                     <div class="img-container">
-                        <img src="visualizations/{os.path.basename(top_plot_path)}" alt="最突出的预测">
+                        <img src="visualizations/{os.path.basename(top_plot_path)}" alt="Top Predictions">
                     </div>
                 </div>
                 
                 <div class="section">
-                    <h2>预测涨幅最高的公司</h2>
+                    <h2>Companies with Highest Predicted Returns</h2>
                     <table>
                         <tr>
-                            <th>公司代码</th>
-                            <th>年份</th>
-                            <th>预测收益率</th>
-                            <th>预测类别</th>
+                            <th>Company Code</th>
+                            <th>Year</th>
+                            <th>Predicted Return</th>
+                            <th>Prediction Category</th>
                         </tr>
             """)
             
@@ -471,7 +478,7 @@ def create_prediction_summary(predictions_df, model_info, output_dir, timestamp=
                                 <td>{row['company_code']}</td>
                                 <td>{row['report_year']}</td>
                                 <td class="positive">{row['prediction_confidence']:.2f}</td>
-                                <td>上涨</td>
+                                <td>Up</td>
                             </tr>
                         """)
             
@@ -480,13 +487,13 @@ def create_prediction_summary(predictions_df, model_info, output_dir, timestamp=
                 </div>
                 
                 <div class="section">
-                    <h2>预测跌幅最大的公司</h2>
+                    <h2>Companies with Lowest Predicted Returns</h2>
                     <table>
                         <tr>
-                            <th>公司代码</th>
-                            <th>年份</th>
-                            <th>预测收益率</th>
-                            <th>预测类别</th>
+                            <th>Company Code</th>
+                            <th>Year</th>
+                            <th>Predicted Return</th>
+                            <th>Prediction Category</th>
                         </tr>
             """)
             
@@ -511,7 +518,7 @@ def create_prediction_summary(predictions_df, model_info, output_dir, timestamp=
                                 <td>{row['company_code']}</td>
                                 <td>{row['report_year']}</td>
                                 <td class="negative">{row['prediction_confidence']:.2f}</td>
-                                <td>下跌</td>
+                                <td>Down</td>
                             </tr>
                         """)
             
@@ -520,8 +527,8 @@ def create_prediction_summary(predictions_df, model_info, output_dir, timestamp=
                 </div>
                 
                 <div class="section">
-                    <h2>完整预测结果</h2>
-                    <p>完整的预测结果保存在 <a href="{os.path.basename(output_path)}">{os.path.basename(output_path)}</a></p>
+                    <h2>Complete Results</h2>
+                    <p>Complete prediction results are saved in <a href="{os.path.basename(output_path)}">{os.path.basename(output_path)}</a></p>
                 </div>
             </body>
             </html>
