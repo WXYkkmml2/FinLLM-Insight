@@ -15,6 +15,7 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 import re
+import concurrent.futures
 from datetime import datetime
 
 # For LLM API calls
@@ -267,89 +268,77 @@ def extract_category_from_response(response, categories):
     
     return max_category[0]
 
-def query_llm(client, embedding_func, company_code, year, question, llm_model, max_tokens_per_call=12000):
+def query_llm_batch(client, embedding_func, company_code, year, questions, llm_model, max_tokens_per_call=12000):
     """
-    Query LLM with company report data
-    
-    Args:
-        client (chromadb.Client): ChromaDB client
-        embedding_func: Embedding function
-        company_code (str): Company code
-        year (str): Report year
-        question (str): Question for LLM
-        llm_model (str): LLM model name
-        max_tokens_per_call (int): Maximum tokens per LLM call
-        
-    Returns:
-        str: LLM response
+    Query LLM with multiple questions in a single call
     """
     try:
         # Get company collection
         collection_name = f"company_{company_code}"
         collection = client.get_collection(name=collection_name, embedding_function=embedding_func)
         
+        # Combine all questions
+        combined_question = "Please analyze the following aspects of the company: "
+        for key, question_data in questions.items():
+            combined_question += f"\n\n{key.upper()}: {question_data['question']}"
+        
         # Query for relevant chunks
         results = collection.query(
-            query_texts=[question],
+            query_texts=[combined_question],
             where={"year": year},
             n_results=10
         )
         
-        if not results or not results['documents'] or len(results['documents'][0]) == 0:
-            logger.warning(f"No documents found for {company_code} {year}")
-            return f"No report data for {company_code} {year} years was found。"
+        # Code for processing text and querying LLM...
         
-        # Combine relevant chunks
-        relevant_text = "\n\n".join(results['documents'][0])
-        
-        # Limit text length to avoid exceeding token limits
-        if len(relevant_text) > max_tokens_per_call * 2:  # Rough character to token ratio
-            relevant_text = relevant_text[:max_tokens_per_call * 2]
-        
-        # Prepare prompt
-        system_prompt = """You are a professional financial analyst skilled at analyzing annual reports of Chinese listed companies.
-Based on the provided annual report excerpts (from company {company_code}'s {year} annual report), answer a specific question.
-Only use information from the provided annual report, do not use any external knowledge you may have.
-If there is insufficient information in the report to answer the question comprehensively, clearly state this limitation rather than guessing or using external knowledge.
-Ensure your analysis is comprehensive, objective, and considers both positive and negative factors.
+        # Prepare the prompt word and ask LLM to answer each question in a specific format
+        system_prompt = """You are a professional financial analyst. You will be given multiple questions about a company's annual report.
+For each question, provide your answer in a clearly marked section. 
+Use the following format for each answer:
+QUESTION_KEY: [Your detailed answer]
+SCORE: [Numeric score if requested]
+CATEGORY: [Category if requested]
+
+Be thorough but concise in your analysis.
 """
         
-        user_prompt = f"""The following are relevant clips of the {company_code} company{year} annual report:
+        user_prompt = f"""Based on the company {company_code}'s {year} annual report sections below:
 
 {relevant_text}
 
-Question: {question}
+Please answer each of the following questions:
 
-Please answer the questions based on the above annual report content. Require:
-1. The analysis should be comprehensive, objective and specific, and avoid general discussion
-2. If it is a scoring question, a clear score must be given and the reasons for scoring must be explained in detail.
-3. If it is a classification question, you must select one from the given options and explain the reason for the selection in detail.
-4. Only based on the annual report information provided, no external information is introduced
+{combined_question}
+
+For each question, follow the format specified in the instructions. Always include SCORE or CATEGORY when applicable.
 """
         
         # Call LLM API
-        if "gpt" in llm_model.lower() or "openai" in llm_model.lower():
-            client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-            response = client.chat.completions.create(
-                model=llm_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.2,
-                max_tokens=2000
-            )
-            
-            response_text = response.choices[0].message.content
-            return response_text
+        response = client.chat.completions.create(
+            model=llm_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.2,
+            max_tokens=3000  # 增加token以容纳更多回答
+        )
         
-        # Add support for other LLM APIs as needed
-        else:
-            raise ValueError(f"Unsupported LLM model: {llm_model}")
+        response_text = response.choices[0].message.content
+        
+        # Analyze the answers and separate the answers of each question
+        parsed_responses = {}
+        for question_key in questions.keys():
+            pattern = rf"{question_key.upper()}:\s(.*?)(?=\n[A-Z_]+:|$)"
+            match = re.search(pattern, response_text, re.DOTALL)
+            if match:
+                parsed_responses[question_key] = match.group(1).strip()
+        
+        return parsed_responses
     
     except Exception as e:
-        logger.error(f"Error querying LLM for {company_code} {year}: {e}")
-        return f"LLM query error: {str(e)}"
+        logger.error(f"Error in batch query for {company_code} {year}: {e}")
+        return {}
 
 def generate_features(embeddings_dir, output_dir, llm_model, embedding_model, questions_path=None, max_tokens_per_call=12000):
     """
@@ -418,29 +407,36 @@ def generate_features(embeddings_dir, output_dir, llm_model, embedding_model, qu
             
             responses = {}
             
-            # Process each question
+
+            # batch processing version
+            # Collect all questions into one batch
+            batch_questions = {}
             for question_key, question_data in questions.items():
+                batch_questions[question_key] = question_data
+            
+            # Call batch query function
+            logger.info(f"Batch querying LLM for {company_code} {year} with {len(batch_questions)} questions")
+            batch_responses = query_llm_batch(
+                client=client,
+                embedding_func=embedding_func,
+                company_code=company_code,
+                year=year,
+                questions=batch_questions,
+                llm_model=llm_model,
+                max_tokens_per_call=max_tokens_per_call
+            )
+            
+            # Handle responses to each problem
+            for question_key, response in batch_responses.items():
                 try:
-                    # Get question details
-                    question_text = question_data["question"]
+                    # Get the question details
+                    question_data = questions[question_key]
                     question_type = question_data.get("type", "numeric")
-                    
-                    # Query LLM
-                    logger.info(f"Querying LLM for {company_code} {year} - {question_key}")
-                    response = query_llm(
-                        client=client,
-                        embedding_func=embedding_func,
-                        company_code=company_code,
-                        year=year,
-                        question=question_text,
-                        llm_model=llm_model,
-                        max_tokens_per_call=max_tokens_per_call
-                    )
                     
                     # Store full response
                     responses[question_key] = response
                     
-                    # Extract structured data
+                    #Extract structured data
                     if question_type == "numeric":
                         score_range = question_data.get("score_range", [1, 10])
                         score = extract_score_from_response(response, score_range)
@@ -450,14 +446,11 @@ def generate_features(embeddings_dir, output_dir, llm_model, embedding_model, qu
                         categories = question_data.get("categories", [])
                         category = extract_category_from_response(response, categories)
                         features[f"{question_key}_category"] = category
-                    
-                    # Add delay to avoid rate limits
-                    time.sleep(1)
-                
+                        
                 except Exception as e:
-                    logger.error(f"Error processing question {question_key} for {company_code} {year}: {e}")
+                    logger.error(f"Error processing response for question {question_key} for {company_code} {year}: {e}")
                     continue
-            
+        
             # Store full responses in a separate file
             responses_dir = os.path.join(output_dir, "responses")
             os.makedirs(responses_dir, exist_ok=True)
@@ -483,6 +476,142 @@ def generate_features(embeddings_dir, output_dir, llm_model, embedding_model, qu
     logger.info(f"Generated features for {len(features_df)} reports. Saved to {features_path}")
     return features_df
 
+
+
+def generate_features_parallel(embeddings_dir, output_dir, llm_model, embedding_model, questions_path=None, max_tokens_per_call=12000, max_workers=4):
+    """
+    Generate features for all companies using LLM analysis with parallel processing
+    """
+    # Load questions
+    questions = load_questions(questions_path)
+    
+    # Connect to vector database
+    client, embedding_func = connect_to_vector_db(embeddings_dir, embedding_model)
+    
+    # Get company collections
+    company_collections = get_company_collections(client)
+    
+    if not company_collections:
+        logger.error("No company collections found in vector database")
+        return None
+    
+    all_features = []
+    
+    def process_company(collection_name):
+        """Process a single company"""
+        company_features = []
+        company_code = collection_name.replace("company_", "")
+        
+        try:
+            # Get collection
+            collection = client.get_collection(name=collection_name, embedding_function=embedding_func)
+            
+            # Get available years for this company
+            years = set()
+            results = collection.get()
+            
+            if not results or 'metadatas' not in results or not results['metadatas']:
+                logger.warning(f"No data found for company {company_code}")
+                return []
+            
+            for metadata in results['metadatas']:
+                if 'year' in metadata:
+                    years.add(metadata['year'])
+            
+            if not years:
+                logger.warning(f"No year information found for company {company_code}")
+                return []
+            
+            # Process each year
+            for year in years:
+                features = {
+                    "company_code": company_code,
+                    "report_year": year,
+                    "analysis_timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                
+                responses = {}
+                
+                # Batch process all questions
+                batch_questions = {k: v for k, v in questions.items()}
+                
+                batch_responses = query_llm_batch(
+                    client=client,
+                    embedding_func=embedding_func,
+                    company_code=company_code,
+                    year=year,
+                    questions=batch_questions,
+                    llm_model=llm_model,
+                    max_tokens_per_call=max_tokens_per_call
+                )
+                
+                # Process responses for each question
+                for question_key, response in batch_responses.items():
+                    try:
+                        # Get question details
+                        question_data = questions[question_key]
+                        question_type = question_data.get("type", "numeric")
+                        
+                        # Store full response
+                        responses[question_key] = response
+                        
+                        # Extract structured data
+                        if question_type == "numeric":
+                            score_range = question_data.get("score_range", [1, 10])
+                            score = extract_score_from_response(response, score_range)
+                            features[f"{question_key}_score"] = score
+                        
+                        elif question_type == "categorical":
+                            categories = question_data.get("categories", [])
+                            category = extract_category_from_response(response, categories)
+                            features[f"{question_key}_category"] = category
+                    
+                    except Exception as e:
+                        logger.error(f"Error processing question {question_key} for {company_code} {year}: {e}")
+                
+                # Store responses in a separate file
+                responses_dir = os.path.join(output_dir, "responses")
+                os.makedirs(responses_dir, exist_ok=True)
+                
+                responses_file = os.path.join(responses_dir, f"{company_code}_{year}_responses.json")
+                with open(responses_file, 'w', encoding='utf-8') as f:
+                    json.dump(responses, f, ensure_ascii=False, indent=2)
+                
+                # Add to features list
+                company_features.append(features)
+        
+        except Exception as e:
+            logger.error(f"Error processing company {company_code}: {e}")
+        
+        return company_features
+    
+    # Use thread pool to process companies in parallel
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_company = {executor.submit(process_company, collection_name): collection_name 
+                            for collection_name in company_collections}
+        
+        for future in tqdm(concurrent.futures.as_completed(future_to_company), total=len(company_collections), desc="Processing companies"):
+            company_name = future_to_company[future]
+            try:
+                company_features = future.result()
+                all_features.extend(company_features)
+            except Exception as e:
+                logger.error(f"Error getting results for company {company_name}: {e}")
+    
+    if not all_features:
+        logger.error("No features generated for any company")
+        return None
+    
+    # Combine all features
+    features_df = pd.DataFrame(all_features)
+    
+    # Save features
+    features_path = os.path.join(output_dir, "llm_features.csv")
+    features_df.to_csv(features_path, index=False, encoding='utf-8-sig')
+    
+    logger.info(f"Generated features for {len(features_df)} reports. Saved to {features_path}")
+    return features_df
+    
 def main():
     """Main function to run the feature generation process"""
     parser = argparse.ArgumentParser(description='Generate features from annual reports using LLM')
@@ -490,6 +619,8 @@ def main():
                         help='Path to configuration file')
     parser.add_argument('--questions_path', type=str, default='config/questions.json',
                         help='Path to questions file')
+    parser.add_argument('--parallel', action='store_true', 
+                       help='Use parallel processing')
     args = parser.parse_args()
     
     # Load configuration
@@ -503,14 +634,24 @@ def main():
     max_tokens_per_call = config.get('max_tokens_per_call', 12000)
     
     # Generate features
-    generate_features(
-        embeddings_dir=embeddings_dir,
-        output_dir=output_dir,
-        llm_model=llm_model,
-        embedding_model=embedding_model,
-        questions_path=args.questions_path,
-        max_tokens_per_call=max_tokens_per_call
-    )
+    if args.parallel:
+        generate_features_parallel(
+            embeddings_dir=embeddings_dir,
+            output_dir=output_dir,
+            llm_model=llm_model,
+            embedding_model=embedding_model,
+            questions_path=args.questions_path,
+            max_tokens_per_call=max_tokens_per_call
+        )
+    else:
+        generate_features(
+            embeddings_dir=embeddings_dir,
+            output_dir=output_dir,
+            llm_model=llm_model,
+            embedding_model=embedding_model,
+            questions_path=args.questions_path,
+            max_tokens_per_call=max_tokens_per_call
+        )
 
 if __name__ == "__main__":
     main()
