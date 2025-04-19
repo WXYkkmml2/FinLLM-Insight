@@ -68,10 +68,24 @@ def get_stock_list(index_name):
             stock_list.columns = ['code', 'name']
             # Format code to ensure 6 digits with leading zeros
             stock_list['code'] = stock_list['code'].apply(lambda x: f"{x:06d}")
+        elif index_name == "CSI50":
+            # Custom processing method: Get the Shanghai and Shenzhen 300 and retain only the top 50 companies
+            stock_list = ak.index_stock_cons_csindex(symbol="000300")
+            # Extract stock codes and names
+            stock_list = stock_list[['成分券代码', '成分券名称']]
+            stock_list.columns = ['code', 'name']
+            # Format code to ensure 6 digits with leading zeros
+            stock_list['code'] = stock_list['code'].apply(lambda x: f"{x:06d}")
+            # Only keep first 50 companies
+            stock_list = stock_list.head(50)
+            logger.info(f"Limited to first 50 companies from CSI300")
         else:
             # Default to get all A-share stocks
             stock_list = ak.stock_info_a_code_name()
             stock_list.columns = ['code', 'name']
+            # If using default, still limit to first 50 companies
+            stock_list = stock_list.head(50)
+            logger.info(f"Limited to first 50 companies from A-shares")
         
         logger.info(f"Retrieved {len(stock_list)} stocks")
         return stock_list
