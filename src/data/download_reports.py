@@ -5,8 +5,13 @@
 Data Acquisition Module for FinLLM-Insight
 This module downloads annual reports of Chinese listed companies using AKShare.
 """
-
 import os
+import sys
+project_root = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+    
+
 import time
 import json
 import argparse
