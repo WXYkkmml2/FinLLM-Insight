@@ -1,8 +1,62 @@
 # 特征工程模块
 
-本模块负责从处理后的年报文本中提取特征，包括生成文本嵌入向量和使用大语言模型进行结构化特征提取。
+## 环境配置
+
+### 确保 ChromaDB 版本支持异步 API
+
+要确保你的 ChromaDB 版本支持异步 API，需要遵循以下步骤：
+
+1. **检查 ChromaDB 版本**：
+   ```bash
+   pip show chromadb
+   ```
+   确保版本至少为 0.4.0 或更高，因为较新版本才完全支持异步 API。
+
+2. **更新 ChromaDB**（如果需要）：
+   ```bash
+   pip install --upgrade chromadb
+   ```
+
+3. **验证异步 API 可用**：
+   创建一个简单的测试脚本来验证异步 API 是否可用：
+   ```python
+   import asyncio
+   import chromadb
+
+   async def test_async_api():
+       try:
+           client = chromadb.AsyncClient()
+           print("异步 API 可用!")
+           return True
+       except (AttributeError, ImportError) as e:
+           print(f"错误: {e}")
+           print("当前 ChromaDB 版本不支持异步 API")
+           return False
+
+   if __name__ == "__main__":
+       result = asyncio.run(test_async_api())
+       print(f"测试结果: {'成功' if result else '失败'}")
+   ```
+
+4. **检查依赖关系**：
+   确保安装了支持异步操作的相关依赖，例如：
+   ```bash
+   pip install aiohttp
+   ```
+
+5. **查阅 ChromaDB 文档**：
+   随时查阅最新的 [ChromaDB 文档](https://docs.trychroma.com/)，了解异步 API 的变更和推荐用法。
+
+如果环境中 ChromaDB 不支持异步 API（例如使用了较旧版本），可以使用以下替代方案：
+
+1. 继续使用同步 API，但通过多线程或进程池来并行处理多个文件
+2. 将异步代码包装在兼容性层中，在不支持异步时自动回退到同步操作
+
+注意：使用异步 API 可以提高性能，特别是在处理大量文档时。这种方法可以更有效地利用 I/O 等待时间，从而加快整体处理速度。
 
 ## 功能模块
+
+本模块负责从处理后的年报文本中提取特征，包括生成文本嵌入向量和使用大语言模型进行结构化特征提取。
 
 ### 1. 嵌入向量生成 (`embeddings.py`)
 
