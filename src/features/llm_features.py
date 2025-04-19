@@ -75,52 +75,51 @@ def load_questions(questions_path='./questions.json'):
         # Default questions if file not found
         default_questions = {
             "financial_health": {
-                "question": "基于年报内容，评估公司的财务健康状况。考虑收入增长、利润率、债务水平、现金流等因素。分析公司的财务状况是否稳健，是否存在潜在风险。给出1-10的评分（10分为最佳）并详细解释理由。",
+"question": "Assess the company's financial health based on the content of the annual report. Consider factors such as revenue growth, profit margins, debt level, cash flow, etc. Analyze whether the company's financial situation is stable and whether there are potential risks. Give a score of 1-10 (10 points are the best) and explain the reasons in detail.",
                 "type": "numeric",
                 "score_range": [1, 10]
             },
             "business_model": {
-                "question": "基于年报内容，分析公司的商业模式和竞争优势。公司的核心业务是什么？它在行业中的竞争地位如何？公司是否有持续的竞争优势？给出1-10的评分（10分为最佳）并详细解释理由。",
+                "question": "Based on the content of the annual report, analyze the company's business model and competitive advantages. What is the company's core business? What is its competitive position in the industry? Does the company have a continuous competitive advantage? Give a rating of 1-10 (10 points are the best) and explain the reasons in detail.",
                 "type": "numeric",
                 "score_range": [1, 10]
             },
             "future_growth": {
-                "question": "基于年报内容，评估公司的未来增长潜力。公司在哪些领域投资？市场前景如何？有哪些增长驱动因素？给出1-10的评分（10分为最佳）并详细解释理由。",
+                "question": "Based on the content of the annual report, evaluate the company's future growth potential. In which areas does the company invest? What are the market prospects? What are the growth drivers? Give a 1-10 rating (10 points are the best) and explain the reasons in detail.",
                 "type": "numeric",
                 "score_range": [1, 10]
             },
             "management_quality": {
-                "question": "基于年报内容，评价公司管理层的质量。管理层的战略决策是否合理？执行能力如何？是否有良好的公司治理？给出1-10的评分（10分为最佳）并详细解释理由。",
+                "question": "Based on the content of the annual report, evaluate the quality of the company's management. Is the strategic decisions of the management reasonable? How is the execution ability? Is there good corporate governance? Give a 1-10 rating (10 points are the best) and explain the reasons in detail.",
                 "type": "numeric",
                 "score_range": [1, 10]
             },
             "risk_assessment": {
-                "question": "基于年报内容，评估公司面临的主要风险。包括市场风险、经营风险、财务风险、法律和合规风险等。这些风险的严重程度如何？公司应对风险的措施是否充分？给出1-10的评分（1分表示风险极高，10分表示风险极低）并详细解释理由。",
+                "question": "Based on the content of the annual report, evaluate the main risks faced by the company. It includes market risks, operating risks, financial risks, legal and compliance risks, etc. How serious are these risks? Is the company's measures to deal with risks adequate? Give a score of 1-10 (1 point means extremely high risk, 10 points means extremely low risk) and explain the reasons in detail.",
                 "type": "numeric",
                 "score_range": [1, 10]
             },
             "industry_outlook": {
-                "question": "基于年报内容，分析公司所处行业的前景。行业发展趋势如何？有哪些机遇和挑战？公司在行业中的定位如何？给出1-10的评分（10分为最佳）并详细解释理由。",
+                "question": "Based on the content of the annual report, analyze the prospects of the company's industry. What are the development trends of the industry? What are the opportunities and challenges? How is the company's positioning in the industry? Give a rating of 1-10 (10 points are the best) and explain the reasons in detail.",
                 "type": "numeric",
                 "score_range": [1, 10]
             },
             "esg_performance": {
-                "question": "基于年报内容，评估公司在环境、社会和治理(ESG)方面的表现。公司是否有可持续发展战略？社会责任表现如何？公司治理结构是否健全？给出1-10的评分（10分为最佳）并详细解释理由。",
+                "question": "Based on the content of the annual report, evaluate the company's performance in environmental, social and governance (ESG). Does the company have a sustainable development strategy? How does social responsibility perform? Is the corporate governance structure sound? Give a 1-10 rating (10 points are the best) and explain the reasons in detail.",
                 "type": "numeric",
                 "score_range": [1, 10]
             },
             "innovation_capability": {
-                "question": "基于年报内容，评价公司的创新能力。公司在研发方面的投入如何？有哪些创新成果？创新对公司业务的影响如何？给出1-10的评分（10分为最佳）并详细解释理由。",
+                "question": "Based on the content of the annual report, evaluate the company's innovation capabilities. How is the company's investment in R&D? What are its innovative achievements? What impact does innovation have on the company's business? Give a 1-10 score (10 points are the best) and explain the reasons in detail.",
                 "type": "numeric",
                 "score_range": [1, 10]
             },
             "investment_recommendation": {
-                "question": "基于年报内容和以上分析，给出对该公司股票的投资建议。考虑公司基本面、估值水平、增长前景和风险因素。你的建议是强烈买入、买入、持有、卖出还是强烈卖出？请详细解释理由。",
+                "question": "Based on the content of the annual report and the above analysis, investment advice on the company's stock is given. Consider the company's fundamentals, valuation level, growth prospects and risk factors. Is your suggestion strongly buying, buying, holding, selling or selling? Please explain the reasons in detail.",
                 "type": "categorical",
-                "categories": ["强烈卖出", "卖出", "持有", "买入", "强烈买入"]
+                "categories": ["Sell strongly", "Sell", "Hold", "Buy strongly"]
             }
         }
-        
         return default_questions
 
 def connect_to_vector_db(embeddings_dir, embedding_model):
@@ -202,7 +201,7 @@ def extract_score_from_response(response, score_range=None):
     
     # Pattern to match scores like "Score: 7" or "评分：7" or just "7/10"
     patterns = [
-        r'(?:Score|评分|得分|分数)[:：]?\s*(\d+(?:\.\d+)?)',
+        r'(?:Score|Rating | Score | Score)[:：]?\s*(\d+(?:\.\d+)?)',
         r'(\d+(?:\.\d+)?)\s*[/／]\s*10',
         r'(\d+(?:\.\d+)?)\s*分'
     ]
@@ -260,11 +259,11 @@ def extract_category_from_response(response, categories):
         neutral_count = sum(response.lower().count(word) for word in neutral_words)
         
         if positive_count > negative_count and positive_count > neutral_count:
-            return "买入"
+            return "buy"
         elif negative_count > positive_count and negative_count > neutral_count:
-            return "卖出"
+            return "sell"
         else:
-            return "持有"
+            return "hold"
     
     return max_category[0]
 
@@ -298,7 +297,7 @@ def query_llm(client, embedding_func, company_code, year, question, llm_model, m
         
         if not results or not results['documents'] or len(results['documents'][0]) == 0:
             logger.warning(f"No documents found for {company_code} {year}")
-            return f"没有找到{company_code} {year}年的报告数据。"
+            return f"No report data for {company_code} {year} years was found。"
         
         # Combine relevant chunks
         relevant_text = "\n\n".join(results['documents'][0])
@@ -308,24 +307,24 @@ def query_llm(client, embedding_func, company_code, year, question, llm_model, m
             relevant_text = relevant_text[:max_tokens_per_call * 2]
         
         # Prepare prompt
-        system_prompt = f"""你是一位专业的财务分析师，擅长分析上市公司年度报告。
-现在，你需要基于提供的年度报告片段（来自{company_code}公司{year}年的年报），回答一个具体问题。
-请只基于提供的年报信息进行分析，不要使用你可能知道的其他信息。
-如果年报中没有足够的信息来回答问题，请明确指出，而不是猜测或使用外部知识。
-请确保分析全面、客观，注意同时考虑正面和负面因素。
+        system_prompt = """You are a professional financial analyst skilled at analyzing annual reports of Chinese listed companies.
+Based on the provided annual report excerpts (from company {company_code}'s {year} annual report), answer a specific question.
+Only use information from the provided annual report, do not use any external knowledge you may have.
+If there is insufficient information in the report to answer the question comprehensively, clearly state this limitation rather than guessing or using external knowledge.
+Ensure your analysis is comprehensive, objective, and considers both positive and negative factors.
 """
         
-        user_prompt = f"""以下是{company_code}公司{year}年年度报告的相关片段：
+        user_prompt = f"""The following are relevant clips of the {company_code} company{year} annual report:
 
 {relevant_text}
 
-问题：{question}
+Question: {question}
 
-请基于以上年报内容回答问题。要求：
-1. 分析要全面、客观、具体，避免泛泛而谈
-2. 如果是评分题，必须给出明确的分数，并详细解释评分理由
-3. 如果是分类题，必须从给定选项中选择一个，并详细解释选择理由
-4. 只基于提供的年报信息，不引入外部信息
+Please answer the questions based on the above annual report content. Require:
+1. The analysis should be comprehensive, objective and specific, and avoid general discussion
+2. If it is a scoring question, a clear score must be given and the reasons for scoring must be explained in detail.
+3. If it is a classification question, you must select one from the given options and explain the reason for the selection in detail.
+4. Only based on the annual report information provided, no external information is introduced
 """
         
         # Call LLM API
@@ -350,7 +349,7 @@ def query_llm(client, embedding_func, company_code, year, question, llm_model, m
     
     except Exception as e:
         logger.error(f"Error querying LLM for {company_code} {year}: {e}")
-        return f"LLM查询出错: {str(e)}"
+        return f"LLM query error: {str(e)}"
 
 def generate_features(embeddings_dir, output_dir, llm_model, embedding_model, questions_path=None, max_tokens_per_call=12000):
     """
