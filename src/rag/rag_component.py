@@ -181,6 +181,39 @@ class FinancialReportRAG:
             logger.warning(f"Unsupported LLM model: {self.llm_model}, using OpenAI as fallback")
             return OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
     
+    def call_llm_with_retry(self, model, messages, max_retries=3, initial_delay=1):
+        """
+        Call LLM API with retry mechanism
+        
+        Args:
+            model (str): Model name
+            messages (list): List of message dicts
+            max_retries (int): Maximum number of retry attempts
+            initial_delay (int): Initial delay before first retry
+            
+        Returns:
+            response: API response
+            
+        Raises:
+            Exception: If all retry attempts fail
+        """
+        for attempt in range(max_retries):
+            try:
+                response = self.llm_client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=0.3,
+                    max_tokens=1000
+                )
+                return response
+            except Exception as e:
+                wait_time = initial_delay * (2 ** attempt)
+                logger.warning(f"LLM API call attempt {attempt+1}/{max_retries} failed: {e}. Retrying in {wait_time}s...")
+                time.sleep(wait_time)
+        
+        logger.error(f"LLM API call failed after {max_retries} attempts")
+        raise Exception(f"Failed to call LLM API after {max_retries} attempts")
+    
     def get_available_companies(self):
         """
         Get list of available companies
@@ -229,14 +262,14 @@ class FinancialReportRAG:
             # Validate inputs
             if company_code and company_code not in self.companies:
                 return {
-                    "answer": f"公司代码 {company_code} 不在系统中。可用的公司代码: {', '.join(self.get_available_companies()[:10])}...",
+                    "answer": f"Company code {company_code} not found in the system. Available company codes: {', '.join(self.get_available_companies()[:10])}...",
                     "sources": []
                 }
             
             if company_code and year and year not in self.get_company_years(company_code):
                 available_years = self.get_company_years(company_code)
                 return {
-                    "answer": f"公司 {company_code} 在系统中没有 {year} 年的年报。可用年份: {', '.join(available_years)}",
+                    "answer": f"Annual report for company {company_code} for year {year} not found in the system. Available years: {', '.join(available_years)}",
                     "sources": []
                 }
             
@@ -268,9 +301,9 @@ class FinancialReportRAG:
                             chunk_info = {
                                 "content": doc,
                                 "company_code": metadata.get("company_code", company_code),
-                                "year": metadata.get("year", year if year else "未知"),
+                                "year": metadata.get("year", year if year else "unknown"),
                                 "chunk_index": metadata.get("chunk_index", i),
-                                "source_file": metadata.get("source_file", "未知")
+                                "source_file": metadata.get("source_file", "unknown")
                             }
                             
                             relevant_chunks.append(chunk_info)
@@ -302,9 +335,9 @@ class FinancialReportRAG:
                                     chunk_info = {
                                         "content": doc,
                                         "company_code": metadata.get("company_code", current_company),
-                                        "year": metadata.get("year", "未知"),
+                                        "year": metadata.get("year", "unknown"),
                                         "chunk_index": metadata.get("chunk_index", i),
-                                        "source_file": metadata.get("source_file", "未知")
+                                        "source_file": metadata.get("source_file", "unknown")
                                     }
                                     
                                     relevant_chunks.append(chunk_info)
@@ -317,7 +350,7 @@ class FinancialReportRAG:
             
             if not relevant_chunks:
                 return {
-                    "answer": "没有找到与问题相关的信息。请尝试重新表述您的问题，或指定具体的公司代码。",
+                    "answer": "No relevant information found for your question. Please try rephrasing your question or specify a company code.",
                     "sources": []
                 }
             
@@ -326,42 +359,40 @@ class FinancialReportRAG:
             sources = []
             
             for i, chunk in enumerate(relevant_chunks):
-                context_text += f"\n\n文档片段 {i+1} [来源: {chunk['company_code']}公司 {chunk['year']}年报]:\n{chunk['content']}"
+                context_text += f"\n\nDocument Chunk {i+1} [Source: Company {chunk['company_code']}, Annual Report {chunk['year']}]:\n{chunk['content']}"
                 
                 source_info = {
                     "company_code": chunk["company_code"],
                     "year": chunk["year"],
-                    "file": os.path.basename(chunk["source_file"]) if "source_file" in chunk else "未知"
+                    "file": os.path.basename(chunk["source_file"]) if "source_file" in chunk else "unknown"
                 }
                 sources.append(source_info)
             
             # Generate answer using LLM
-            system_prompt = """你是一位专业的金融分析师，擅长分析上市公司年度报告并回答投资者的问题。
-你的回答应该基于提供的年报片段，准确、客观、全面。
-如果年报片段中的信息不足以完整回答问题，请明确指出信息的局限性。
-回答中引用的数据和事实必须来自提供的年报片段，不要添加你自己的信息。
-回答格式应专业、结构清晰，适合投资者参考。
+            system_prompt = """You are a professional financial analyst specializing in analyzing annual reports of listed companies and answering investor questions.
+Your answers should be based on the provided annual report excerpts, accurate, objective, and comprehensive.
+If the information in the provided excerpts is insufficient to fully answer the question, clearly indicate these limitations.
+Data and facts cited in your response must come from the provided annual report excerpts; do not add your own information.
+Your response format should be professional and well-structured, suitable for investor reference.
 """
             
-            user_prompt = f"""请回答以下关于公司年报的问题：
+            user_prompt = f"""Please answer the following question about company annual reports:
 
-问题：{question}
+Question: {question}
 
-以下是相关年报片段：
+Here are relevant annual report excerpts:
 {context_text}
 
-请基于上述年报片段回答问题，如果信息不足，请明确指出。"""
+Please answer the question based on these annual report excerpts. If the information is insufficient, please clearly indicate this."""
             
             try:
-                response = self.llm_client.chat.completions.create(
-                    model=self.llm_model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    temperature=0.3,
-                    max_tokens=1000
-                )
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ]
+                
+                # Use the retry mechanism
+                response = self.call_llm_with_retry(self.llm_model, messages)
                 
                 answer = response.choices[0].message.content
                 
@@ -373,14 +404,14 @@ class FinancialReportRAG:
             except Exception as e:
                 logger.error(f"Error generating answer: {e}")
                 return {
-                    "answer": f"生成回答时出错: {str(e)}",
+                    "answer": f"Error while generating the answer: {str(e)}",
                     "sources": sources
                 }
         
         except Exception as e:
             logger.error(f"Error in query: {e}")
             return {
-                "answer": f"查询处理出错: {str(e)}",
+                "answer": f"Error processing query: {str(e)}",
                 "sources": []
             }
 
@@ -391,24 +422,24 @@ def interactive_cli(rag_system):
     Args:
         rag_system (FinancialReportRAG): Initialized RAG system
     """
-    print("\n欢迎使用 FinLLM-Insight 财报分析系统")
+    print("\nWelcome to FinLLM-Insight Financial Report Analysis System")
     print("="*50)
-    print("您可以通过自然语言提问，系统会基于公司年报内容为您解答")
-    print("输入 'exit' 或 'quit' 退出程序")
-    print("输入 'companies' 查看可用的公司代码")
+    print("You can ask questions in natural language, and the system will answer based on annual report content")
+    print("Enter 'exit' or 'quit' to exit the program")
+    print("Enter 'companies' to see available company codes")
     print("="*50)
     
     while True:
-        print("\n请输入您的问题 (格式: [公司代码] [年份] 问题内容):")
+        print("\nPlease enter your question (format: [company_code] [year] question):")
         user_input = input("> ").strip()
         
-        if user_input.lower() in ["exit", "quit", "退出"]:
-            print("感谢使用，再见！")
+        if user_input.lower() in ["exit", "quit"]:
+            print("Thank you for using the system. Goodbye!")
             break
         
         if user_input.lower() == "companies":
             companies = rag_system.get_available_companies()
-            print(f"\n系统中共有 {len(companies)} 家公司:")
+            print(f"\nThe system contains {len(companies)} companies:")
             for i, company in enumerate(companies):
                 print(f"{company}", end="\t")
                 if (i+1) % 10 == 0:
@@ -431,13 +462,13 @@ def interactive_cli(rag_system):
                 year = parts[1]
                 question = " ".join(parts[2:])
         
-        print("\n正在查询，请稍候...\n")
+        print("\nProcessing query, please wait...\n")
         
         if company_code:
-            print(f"公司代码: {company_code}")
+            print(f"Company code: {company_code}")
         if year:
-            print(f"年份: {year}")
-        print(f"问题: {question}")
+            print(f"Year: {year}")
+        print(f"Question: {question}")
         print("-"*50)
         
         # Query RAG system
@@ -446,13 +477,13 @@ def interactive_cli(rag_system):
         end_time = time.time()
         
         # Display results
-        print("\n回答:")
+        print("\nAnswer:")
         print(result["answer"])
-        print("\n信息来源:")
+        print("\nInformation sources:")
         for source in result["sources"]:
-            print(f"- {source['company_code']}公司 {source['year']}年 年报")
+            print(f"- Company {source['company_code']}, Annual Report {source['year']}")
         
-        print(f"\n查询耗时: {end_time - start_time:.2f} 秒")
+        print(f"\nQuery time: {end_time - start_time:.2f} seconds")
 
 def main():
     """Main function to run the RAG component"""
