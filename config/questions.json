@@ -1,57 +1,57 @@
 {
     "financial_health": {
-        "question": "基于年报内容，评估公司的财务健康状况。考虑收入增长、利润率、债务水平、现金流等因素。分析公司的财务状况是否稳健，是否存在潜在风险。给出1-10的评分（10分为最佳）并详细解释理由。",
+        "question": "Assess the company's financial health based on the content of the annual report. Consider factors such as revenue growth, profit margins, debt level, cash flow, etc. Analyze whether the company's financial situation is stable and whether there are potential risks. Give a score of 1-10 (10 points are the best) and explain the reasons in detail.",
         "type": "numeric",
         "score_range": [1, 10]
     },
     "business_model": {
-        "question": "基于年报内容，分析公司的商业模式和竞争优势。公司的核心业务是什么？它在行业中的竞争地位如何？公司是否有持续的竞争优势？给出1-10的评分（10分为最佳）并详细解释理由。",
+        "question": "Based on the content of the annual report, analyze the company's business model and competitive advantages. What is the company's core business? What is its competitive position in the industry? Does the company have a continuous competitive advantage? Give a rating of 1-10 (10 points are the best) and explain the reasons in detail.",
         "type": "numeric",
         "score_range": [1, 10]
     },
     "future_growth": {
-        "question": "基于年报内容，评估公司的未来增长潜力。公司在哪些领域投资？市场前景如何？有哪些增长驱动因素？给出1-10的评分（10分为最佳）并详细解释理由。",
+        "question": "Based on the content of the annual report, evaluate the company's future growth potential. In which areas does the company invest? What are the market prospects? What are the growth drivers? Give a 1-10 rating (10 points are the best) and explain the reasons in detail.",
         "type": "numeric",
         "score_range": [1, 10]
     },
     "management_quality": {
-        "question": "基于年报内容，评价公司管理层的质量。管理层的战略决策是否合理？执行能力如何？是否有良好的公司治理？给出1-10的评分（10分为最佳）并详细解释理由。",
+        "question": "Based on the content of the annual report, evaluate the quality of the company's management. Is the strategic decisions of the management reasonable? How is the execution ability? Is there good corporate governance? Give a 1-10 rating (10 points are the best) and explain the reasons in detail.",
         "type": "numeric",
         "score_range": [1, 10]
     },
     "risk_assessment": {
-        "question": "基于年报内容，评估公司面临的主要风险。包括市场风险、经营风险、财务风险、法律和合规风险等。这些风险的严重程度如何？公司应对风险的措施是否充分？给出1-10的评分（1分表示风险极高，10分表示风险极低）并详细解释理由。",
+        "question": "Based on the content of the annual report, evaluate the main risks faced by the company. It includes market risks, operating risks, financial risks, legal and compliance risks, etc. How serious are these risks? Is the company's measures to deal with risks adequate? Give a score of 1-10 (1 point means extremely high risk, 10 points means extremely low risk) and explain the reasons in detail.",
         "type": "numeric",
         "score_range": [1, 10]
     },
     "industry_outlook": {
-        "question": "基于年报内容，分析公司所处行业的前景。行业发展趋势如何？有哪些机遇和挑战？公司在行业中的定位如何？给出1-10的评分（10分为最佳）并详细解释理由。",
+        "question": "Based on the content of the annual report, analyze the prospects of the company's industry. What are the development trends of the industry? What are the opportunities and challenges? How is the company's positioning in the industry? Give a rating of 1-10 (10 points are the best) and explain the reasons in detail.",
         "type": "numeric",
         "score_range": [1, 10]
     },
     "esg_performance": {
-        "question": "基于年报内容，评估公司在环境、社会和治理(ESG)方面的表现。公司是否有可持续发展战略？社会责任表现如何？公司治理结构是否健全？给出1-10的评分（10分为最佳）并详细解释理由。",
+        "question": "Based on the content of the annual report, evaluate the company's performance in environmental, social and governance (ESG). Does the company have a sustainable development strategy? How does social responsibility perform? Is the corporate governance structure sound? Give a 1-10 rating (10 points are the best) and explain the reasons in detail.",
         "type": "numeric",
         "score_range": [1, 10]
     },
     "innovation_capability": {
-        "question": "基于年报内容，评价公司的创新能力。公司在研发方面的投入如何？有哪些创新成果？创新对公司业务的影响如何？给出1-10的评分（10分为最佳）并详细解释理由。",
+        "question": "Based on the content of the annual report, evaluate the company's innovation capabilities. How is the company's investment in R&D? What are its innovative achievements? What impact does innovation have on the company's business? Give a 1-10 score (10 points are the best) and explain the reasons in detail.",
         "type": "numeric",
         "score_range": [1, 10]
     },
     "investment_recommendation": {
-        "question": "基于年报内容和以上分析，给出对该公司股票的投资建议。考虑公司基本面、估值水平、增长前景和风险因素。你的建议是强烈买入、买入、持有、卖出还是强烈卖出？请详细解释理由。",
+        "question": "Based on the content of the annual report and the above analysis, investment advice on the company's stock is given. Consider the company's fundamentals, valuation level, growth prospects and risk factors. Is your suggestion strongly buying, buying, holding, selling or selling? Please explain the reasons in detail.",
         "type": "categorical",
-        "categories": ["强烈卖出", "卖出", "持有", "买入", "强烈买入"]
+        "categories": ["Sell strongly", "Sell", "Hold", "Buy strongly"]
     },
     "market_competition": {
-        "question": "基于年报内容，分析公司在市场中的竞争态势。主要竞争对手有哪些？公司相对于竞争对手的优劣势是什么？市场份额如何变化？给出1-10的评分（10分表示极强的竞争优势）并详细解释理由。",
+        "question": "Based on the content of the annual report, analyze the company's competitive trend in the market. What are the main competitors? What are the advantages and disadvantages of the company compared with its competitors? How does the market share change? Give a 1-10 score (10 points represent a strong competitive advantage) and explain the reasons in detail.",
         "type": "numeric",
         "score_range": [1, 10]
     },
     "financial_transparency": {
-        "question": "基于年报内容，评估公司财务信息的透明度和质量。财务报表的完整性和清晰度如何？是否存在信息披露不足或模糊的地方？公司是否存在财务造假的风险？给出1-10的评分（10分表示极高的透明度）并详细解释理由。",
-        "type": "numeric", 
+        "question": "Based on the content of the annual report, evaluate the transparency and quality of the company's financial information. What is the integrity and clarity of the financial statements? Are there any inadequate or ambiguity of information disclosure? Is there any risk of financial fraud in the company? Give a 1-10 score (10 points represent extremely high transparency) and explain the reasons in detail.",
+        "type": "numeric",
         "score_range": [1, 10]
     }
 }
