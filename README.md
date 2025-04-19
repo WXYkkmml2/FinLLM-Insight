@@ -28,7 +28,6 @@ FinLLM-Insight 是一个创新的投资辅助系统，利用大语言模型（LL
 
 ## 系统架构
 
-![系统架构](docs/architecture.png)
 
 FinLLM-Insight 采用模块化设计，由以下主要部分组成：
 
