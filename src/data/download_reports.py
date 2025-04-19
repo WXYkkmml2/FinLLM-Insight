@@ -18,6 +18,28 @@ import akshare as ak
 import pandas as pd
 from tqdm import tqdm
 
+def download_with_retry(url, save_path, max_retries=3, initial_delay=2):
+    """Download file with retry mechanism"""
+    for attempt in range(max_retries):
+        try:
+            r = requests.get(url, stream=True, timeout=30)
+            r.raise_for_status()
+            
+            with open(save_path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            return True
+        
+        except (requests.exceptions.RequestException, IOError) as e:
+            wait_time = initial_delay * (2 ** attempt)
+            logger.warning(f"Attempt {attempt+1}/{max_retries} failed: {e}. Retrying in {wait_time}s...")
+            time.sleep(wait_time)
+    
+    logger.error(f"Failed to download after {max_retries} attempts: {url}")
+    return False
+
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -191,12 +213,17 @@ def download_annual_reports(stock_list, save_dir, min_year=2018, delay=2):
                     
                     # Download the PDF
                     import requests
-                    r = requests.get(pdf_url, stream=True)
-                    with open(save_path, 'wb') as f:
-                        for chunk in r.iter_content(chunk_size=8192):
-                            if chunk:
-                                f.write(chunk)
-                    
+                    download_success = download_with_retry(pdf_url, save_path)
+                    if not download_success:
+                        results.append({
+                            'stock_code': stock_code,
+                            'stock_name': stock_name,
+                            'year': report_year,
+                            'file_path': None,
+                            'status': 'download_failed',
+                            'error': "Failed after multiple attempts"
+                        })
+                        continue
                     logger.info(f"Downloaded report: {save_path}")
                     results.append({
                         'stock_code': stock_code,
