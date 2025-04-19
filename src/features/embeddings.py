@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+import asyncio
 
 # Text processing and chunking
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -100,30 +101,60 @@ def split_text_into_chunks(text, chunk_size=1000, chunk_overlap=200):
         logger.error(f"Failed to split text: {e}")
         return []
 
-def create_chroma_client(persist_directory):
+async def create_chroma_client(persist_directory):
     """
-    Create a ChromaDB client
+    Create a ChromaDB async client
     
     Args:
         persist_directory (str): Directory to persist the database
         
     Returns:
-        chromadb.Client: ChromaDB client
+        chromadb.AsyncClient: ChromaDB async client
     """
     try:
-        client = chromadb.Client(Settings(
+        client = chromadb.AsyncClient(Settings(
             chroma_db_impl="duckdb+parquet",
             persist_directory=persist_directory
         ))
         return client
     
     except Exception as e:
-        logger.error(f"Failed to create ChromaDB client: {e}")
+        logger.error(f"Failed to create ChromaDB async client: {e}")
         raise
 
-def process_reports(text_dir, output_dir, embedding_model, chunk_size=1000, chunk_overlap=200):
+def create_embedding_function(embedding_model):
     """
-    Process all reports and generate embeddings
+    Create embedding function based on specified model
+    
+    Args:
+        embedding_model (str): Name of the embedding model
+        
+    Returns:
+        embedding_function: Function to generate embeddings
+    """
+    try:
+        if embedding_model.lower() == "openai":
+            # Use OpenAI's embeddings (requires API key)
+            import openai
+            openai_ef = embedding_functions.OpenAIEmbeddingFunction(
+                api_key=os.environ.get("OPENAI_API_KEY"),
+                model_name="text-embedding-ada-002"
+            )
+            return openai_ef
+        else:
+            # Use Hugging Face models (offline, no API key needed)
+            huggingface_ef = embedding_functions.HuggingFaceEmbeddingFunction(
+                api_key=os.environ.get("HUGGINGFACE_API_KEY", None),
+                model_name=embedding_model
+            )
+            return huggingface_ef
+    except Exception as e:
+        logger.error(f"Failed to create embedding function: {e}")
+        raise
+
+async def process_reports(text_dir, output_dir, embedding_model, chunk_size=1000, chunk_overlap=200):
+    """
+    Process all reports and generate embeddings using async methods
     
     Args:
         text_dir (str): Directory containing text reports
@@ -140,25 +171,10 @@ def process_reports(text_dir, output_dir, embedding_model, chunk_size=1000, chun
     
     # Create vector database client
     db_path = os.path.join(output_dir, "chroma_db")
-    client = create_chroma_client(db_path)
+    client = await create_chroma_client(db_path)
     
     # Create embedding function based on specified model
-    # For Chinese text, we use a model optimized for Chinese
-    if embedding_model.lower() == "openai":
-        # Use OpenAI's embeddings (requires API key)
-        import openai
-        openai_ef = embedding_functions.OpenAIEmbeddingFunction(
-            api_key=os.environ.get("OPENAI_API_KEY"),
-            model_name="text-embedding-ada-002"
-        )
-        embedding_func = openai_ef
-    else:
-        # Use Hugging Face models (offline, no API key needed)
-        huggingface_ef = embedding_functions.HuggingFaceEmbeddingFunction(
-            api_key=os.environ.get("HUGGINGFACE_API_KEY", None),
-            model_name=embedding_model
-        )
-        embedding_func = huggingface_ef
+    embedding_func = create_embedding_function(embedding_model)
     
     # Create a collection for each company
     companies = {}
@@ -220,10 +236,10 @@ def process_reports(text_dir, output_dir, embedding_model, chunk_size=1000, chun
             collection_name = f"company_{company_code}"
             
             try:
-                collection = client.get_collection(name=collection_name, embedding_function=embedding_func)
+                collection = await client.get_collection(name=collection_name, embedding_function=embedding_func)
                 logger.info(f"Using existing collection for {company_code}")
             except Exception:
-                collection = client.create_collection(name=collection_name, embedding_function=embedding_func)
+                collection = await client.create_collection(name=collection_name, embedding_function=embedding_func)
                 logger.info(f"Created new collection for {company_code}")
             
             # Prepare chunks for insertion
@@ -236,7 +252,7 @@ def process_reports(text_dir, output_dir, embedding_model, chunk_size=1000, chun
             } for i in range(len(chunks))]
             
             # Add chunks to collection
-            collection.add(
+            await collection.add(
                 documents=chunks,
                 ids=ids,
                 metadatas=metadatas
@@ -259,7 +275,7 @@ def process_reports(text_dir, output_dir, embedding_model, chunk_size=1000, chun
             stats["error_files"] += 1
     
     # Persist the database
-    client.persist()
+    await client.persist()
     
     # Save companies metadata
     companies_path = os.path.join(output_dir, "companies_metadata.json")
@@ -291,14 +307,14 @@ def main():
     chunk_size = config.get('chunk_size', 1000)
     chunk_overlap = config.get('chunk_overlap', 200)
     
-    # Process reports
-    process_reports(
+    # Process reports using asyncio
+    asyncio.run(process_reports(
         text_dir=text_dir,
         output_dir=output_dir,
         embedding_model=embedding_model,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap
-    )
+    ))
 
 if __name__ == "__main__":
     main()
