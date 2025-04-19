@@ -6,7 +6,13 @@ Target Generation Module for FinLLM-Insight
 This module creates target variables for model training based on stock price data.
 """
 
-import os
+iimport os
+import sys
+project_root = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+
 import json
 import argparse
 import logging
