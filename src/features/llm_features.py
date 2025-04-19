@@ -27,6 +27,26 @@ import chromadb
 from chromadb.config import Settings
 from chromadb.utils import embedding_functions
 
+def call_llm_with_retry(client, model, messages, max_retries=3, initial_delay=1):
+    """Call LLM API with retry mechanism"""
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=0.2,
+                max_tokens=2000
+            )
+            return response
+        except Exception as e:
+            wait_time = initial_delay * (2 ** attempt)
+            logger.warning(f"LLM API call attempt {attempt+1}/{max_retries} failed: {e}. Retrying in {wait_time}s...")
+            time.sleep(wait_time)
+    
+    logger.error(f"LLM API call failed after {max_retries} attempts")
+    raise Exception(f"Failed to call LLM API after {max_retries} attempts")
+    
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -393,15 +413,11 @@ Based on the provided annual report excerpts, please answer the question. Requir
         # Call LLM API
         if "gpt" in llm_model.lower() or "openai" in llm_model.lower():
             client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-            response = client.chat.completions.create(
-                model=llm_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.2,
-                max_tokens=2000
-            )
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ]
+            response = call_llm_with_retry(client, llm_model, messages)
             
             response_text = response.choices[0].message.content
             
