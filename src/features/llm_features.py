@@ -17,6 +17,7 @@ from tqdm import tqdm
 import re
 import concurrent.futures
 from datetime import datetime
+import hashlib
 
 # For LLM API calls
 import openai
@@ -38,6 +39,47 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Initialize LLM response cache
+class LLMResponseCache:
+    """Cache for LLM responses to avoid repeat API calls"""
+    
+    def __init__(self, cache_dir="./cache/llm_responses"):
+        self.cache_dir = cache_dir
+        os.makedirs(cache_dir, exist_ok=True)
+    
+    def get_cache_key(self, prompt, model):
+        """Generate a unique cache key based on prompt and model"""
+        key = f"{prompt}_{model}"
+        return hashlib.md5(key.encode()).hexdigest()
+    
+    def get_cached_response(self, prompt, model):
+        """Retrieve cached response if available"""
+        cache_key = self.get_cache_key(prompt, model)
+        cache_path = os.path.join(self.cache_dir, f"{cache_key}.json")
+        
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"Error reading cache: {e}")
+        
+        return None
+    
+    def cache_response(self, prompt, model, response):
+        """Cache a response"""
+        cache_key = self.get_cache_key(prompt, model)
+        cache_path = os.path.join(self.cache_dir, f"{cache_key}.json")
+        
+        try:
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump(response, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"Error writing cache: {e}")
+
+# Initialize cache
+response_cache = LLMResponseCache()
+
 def load_config(config_path):
     """
     Load configuration from JSON file
@@ -56,7 +98,7 @@ def load_config(config_path):
         logger.error(f"Failed to load config: {e}")
         raise
 
-def load_questions(questions_path='./questions.json'):
+def load_questions(questions_path='config/questions.json'):
     """
     Load questions for LLM analysis
     
@@ -76,7 +118,7 @@ def load_questions(questions_path='./questions.json'):
         # Default questions if file not found
         default_questions = {
             "financial_health": {
-"question": "Assess the company's financial health based on the content of the annual report. Consider factors such as revenue growth, profit margins, debt level, cash flow, etc. Analyze whether the company's financial situation is stable and whether there are potential risks. Give a score of 1-10 (10 points are the best) and explain the reasons in detail.",
+                "question": "Assess the company's financial health based on the content of the annual report. Consider factors such as revenue growth, profit margins, debt level, cash flow, etc. Analyze whether the company's financial situation is stable and whether there are potential risks. Give a score of 1-10 (10 points are the best) and explain the reasons in detail.",
                 "type": "numeric",
                 "score_range": [1, 10]
             },
@@ -89,38 +131,9 @@ def load_questions(questions_path='./questions.json'):
                 "question": "Based on the content of the annual report, evaluate the company's future growth potential. In which areas does the company invest? What are the market prospects? What are the growth drivers? Give a 1-10 rating (10 points are the best) and explain the reasons in detail.",
                 "type": "numeric",
                 "score_range": [1, 10]
-            },
-            "management_quality": {
-                "question": "Based on the content of the annual report, evaluate the quality of the company's management. Is the strategic decisions of the management reasonable? How is the execution ability? Is there good corporate governance? Give a 1-10 rating (10 points are the best) and explain the reasons in detail.",
-                "type": "numeric",
-                "score_range": [1, 10]
-            },
-            "risk_assessment": {
-                "question": "Based on the content of the annual report, evaluate the main risks faced by the company. It includes market risks, operating risks, financial risks, legal and compliance risks, etc. How serious are these risks? Is the company's measures to deal with risks adequate? Give a score of 1-10 (1 point means extremely high risk, 10 points means extremely low risk) and explain the reasons in detail.",
-                "type": "numeric",
-                "score_range": [1, 10]
-            },
-            "industry_outlook": {
-                "question": "Based on the content of the annual report, analyze the prospects of the company's industry. What are the development trends of the industry? What are the opportunities and challenges? How is the company's positioning in the industry? Give a rating of 1-10 (10 points are the best) and explain the reasons in detail.",
-                "type": "numeric",
-                "score_range": [1, 10]
-            },
-            "esg_performance": {
-                "question": "Based on the content of the annual report, evaluate the company's performance in environmental, social and governance (ESG). Does the company have a sustainable development strategy? How does social responsibility perform? Is the corporate governance structure sound? Give a 1-10 rating (10 points are the best) and explain the reasons in detail.",
-                "type": "numeric",
-                "score_range": [1, 10]
-            },
-            "innovation_capability": {
-                "question": "Based on the content of the annual report, evaluate the company's innovation capabilities. How is the company's investment in R&D? What are its innovative achievements? What impact does innovation have on the company's business? Give a 1-10 score (10 points are the best) and explain the reasons in detail.",
-                "type": "numeric",
-                "score_range": [1, 10]
-            },
-            "investment_recommendation": {
-                "question": "Based on the content of the annual report and the above analysis, investment advice on the company's stock is given. Consider the company's fundamentals, valuation level, growth prospects and risk factors. Is your suggestion strongly buying, buying, holding, selling or selling? Please explain the reasons in detail.",
-                "type": "categorical",
-                "categories": ["Sell strongly", "Sell", "Hold", "Buy strongly"]
             }
         }
+        
         return default_questions
 
 def connect_to_vector_db(embeddings_dir, embedding_model):
@@ -219,8 +232,8 @@ def extract_score_from_response(response, score_range=None):
                 continue
     
     # If no score found, try to infer from text
-    positive_words = ['excellent', 'good', 'strong', 'positive', '优秀', '良好', '强劲', '积极']
-    negative_words = ['poor', 'weak', 'negative', 'bad', '差', '弱', '消极', '不良']
+    positive_words = ['excellent', 'good', 'strong', 'positive']
+    negative_words = ['poor', 'weak', 'negative', 'bad']
     
     positive_count = sum(response.lower().count(word) for word in positive_words)
     negative_count = sum(response.lower().count(word) for word in negative_words)
@@ -251,26 +264,176 @@ def extract_category_from_response(response, categories):
     
     # If no category found or all have zero count, try to infer
     if max_category[1] == 0:
-        positive_words = ['buy', 'recommend', 'positive', 'opportunity', '买入', '推荐', '机会']
-        negative_words = ['sell', 'avoid', 'negative', 'risk', '卖出', '避免', '风险']
-        neutral_words = ['hold', 'neutral', 'wait', '持有', '中性', '等待']
+        positive_words = ['buy', 'recommend', 'positive', 'opportunity']
+        negative_words = ['sell', 'avoid', 'negative', 'risk']
+        neutral_words = ['hold', 'neutral', 'wait']
         
         positive_count = sum(response.lower().count(word) for word in positive_words)
         negative_count = sum(response.lower().count(word) for word in negative_words)
         neutral_count = sum(response.lower().count(word) for word in neutral_words)
         
         if positive_count > negative_count and positive_count > neutral_count:
-            return "buy"
+            return "Buy"
         elif negative_count > positive_count and negative_count > neutral_count:
-            return "sell"
+            return "Sell"
         else:
-            return "hold"
+            return "Hold"
     
     return max_category[0]
+
+def query_llm(client, embedding_func, company_code, year, question, llm_model, max_tokens_per_call=12000):
+    """
+    Query LLM with company report data with caching and optimized text selection
+    
+    Args:
+        client (chromadb.Client): ChromaDB client
+        embedding_func: Embedding function
+        company_code (str): Company code
+        year (str): Report year
+        question (str): Question for LLM
+        llm_model (str): LLM model name
+        max_tokens_per_call (int): Maximum tokens per LLM call
+        
+    Returns:
+        str: LLM response
+    """
+    try:
+        # Get company collection
+        collection_name = f"company_{company_code}"
+        collection = client.get_collection(name=collection_name, embedding_function=embedding_func)
+        
+        # Query for relevant chunks
+        results = collection.query(
+            query_texts=[question],
+            where={"year": year},
+            n_results=10
+        )
+        
+        if not results or not results['documents'] or len(results['documents'][0]) == 0:
+            logger.warning(f"No documents found for {company_code} {year}")
+            return f"No report data found for company {company_code} year {year}."
+        
+        # Smart selection of relevant chunks
+        relevant_chunks = []
+        
+        for i, doc in enumerate(results['documents'][0]):
+            # Calculate relevance score
+            if 'distances' in results and results['distances'][0]:
+                relevance = 1.0 - min(results['distances'][0][i], 1.0)  # Convert distance to relevance
+            else:
+                relevance = 1.0  # Default relevance
+            
+            # Check if document contains important keywords from the question
+            keywords = [w for w in question.lower().split() if len(w) > 3]
+            contains_keywords = any(keyword in doc.lower() for keyword in keywords)
+            
+            # Only include high-relevance chunks or those containing keywords
+            if relevance > 0.7 or contains_keywords:
+                metadata = results['metadatas'][0][i] if results['metadatas'] and results['metadatas'][0] else {}
+                
+                chunk_info = {
+                    "content": doc,
+                    "relevance": relevance,
+                    "company_code": metadata.get("company_code", company_code),
+                    "year": metadata.get("year", year),
+                    "chunk_index": metadata.get("chunk_index", i)
+                }
+                
+                relevant_chunks.append(chunk_info)
+        
+        # Sort chunks by relevance
+        relevant_chunks = sorted(relevant_chunks, key=lambda x: x["relevance"], reverse=True)
+        
+        # Dynamically adjust text amount based on question complexity
+        max_chars = max_tokens_per_call // 2  # Rough character to token ratio
+        current_chars = 0
+        selected_chunks = []
+        
+        for chunk in relevant_chunks:
+            if current_chars + len(chunk["content"]) <= max_chars:
+                selected_chunks.append(chunk)
+                current_chars += len(chunk["content"])
+            elif not selected_chunks:  # At least include one chunk
+                selected_chunks.append(chunk)
+                break
+            else:
+                break
+        
+        # Combine relevant chunks
+        relevant_text = "\n\n".join(chunk["content"] for chunk in selected_chunks)
+        
+        # Prepare prompt
+        system_prompt = f"""You are a professional financial analyst specialized in analyzing company annual reports.
+Now, you need to analyze specific information from the annual report of company {company_code} for year {year}, and answer a specific question.
+Base your analysis only on the provided report excerpts, without using external knowledge.
+If the report excerpts don't contain enough information to answer the question, clearly indicate this limitation.
+Ensure your analysis is comprehensive, objective, and considers both positive and negative factors.
+"""
+        
+        user_prompt = f"""Below are relevant excerpts from company {company_code}'s annual report for year {year}:
+
+{relevant_text}
+
+Question: {question}
+
+Based on the provided annual report excerpts, please answer the question. Requirements:
+1. Be comprehensive, objective, and specific in your analysis
+2. If scoring is requested, provide a clear numerical score and explain your reasoning in detail
+3. If classification is requested, choose one option from the given choices and explain your reasoning
+4. Only use information from the provided report excerpts
+"""
+        
+        # Check cache before making API call
+        cache_key = f"{system_prompt}\n{user_prompt}"
+        cached_response = response_cache.get_cached_response(cache_key, llm_model)
+        
+        if cached_response:
+            logger.info(f"Using cached response for {company_code} {year} - {question[:30]}...")
+            return cached_response
+        
+        # Call LLM API
+        if "gpt" in llm_model.lower() or "openai" in llm_model.lower():
+            client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+            response = client.chat.completions.create(
+                model=llm_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.2,
+                max_tokens=2000
+            )
+            
+            response_text = response.choices[0].message.content
+            
+            # Cache the response
+            response_cache.cache_response(cache_key, llm_model, response_text)
+            
+            return response_text
+        
+        # Add support for other LLM APIs as needed
+        else:
+            raise ValueError(f"Unsupported LLM model: {llm_model}")
+    
+    except Exception as e:
+        logger.error(f"Error querying LLM for {company_code} {year}: {e}")
+        return f"LLM query error: {str(e)}"
 
 def query_llm_batch(client, embedding_func, company_code, year, questions, llm_model, max_tokens_per_call=12000):
     """
     Query LLM with multiple questions in a single call
+    
+    Args:
+        client (chromadb.Client): ChromaDB client
+        embedding_func: Embedding function
+        company_code (str): Company code
+        year (str): Report year
+        questions (dict): Dictionary of questions
+        llm_model (str): LLM model name
+        max_tokens_per_call (int): Maximum tokens per LLM call
+        
+    Returns:
+        dict: Dictionary of question keys to responses
     """
     try:
         # Get company collection
@@ -289,9 +452,56 @@ def query_llm_batch(client, embedding_func, company_code, year, questions, llm_m
             n_results=10
         )
         
-        # Code for processing text and querying LLM...
+        if not results or not results['documents'] or len(results['documents'][0]) == 0:
+            logger.warning(f"No documents found for {company_code} {year}")
+            empty_results = {key: f"No report data found for company {company_code} year {year}." 
+                            for key in questions.keys()}
+            return empty_results
         
-        # Prepare the prompt word and ask LLM to answer each question in a specific format
+        # Smart selection of relevant chunks
+        relevant_chunks = []
+        
+        for i, doc in enumerate(results['documents'][0]):
+            # Calculate relevance score
+            if 'distances' in results and results['distances'][0]:
+                relevance = 1.0 - min(results['distances'][0][i], 1.0)  # Convert distance to relevance
+            else:
+                relevance = 1.0  # Default relevance
+            
+            metadata = results['metadatas'][0][i] if results['metadatas'] and results['metadatas'][0] else {}
+            
+            chunk_info = {
+                "content": doc,
+                "relevance": relevance,
+                "company_code": metadata.get("company_code", company_code),
+                "year": metadata.get("year", year),
+                "chunk_index": metadata.get("chunk_index", i)
+            }
+            
+            relevant_chunks.append(chunk_info)
+        
+        # Sort chunks by relevance
+        relevant_chunks = sorted(relevant_chunks, key=lambda x: x["relevance"], reverse=True)
+        
+        # Dynamically adjust text amount
+        max_chars = max_tokens_per_call // 2
+        current_chars = 0
+        selected_chunks = []
+        
+        for chunk in relevant_chunks:
+            if current_chars + len(chunk["content"]) <= max_chars:
+                selected_chunks.append(chunk)
+                current_chars += len(chunk["content"])
+            elif not selected_chunks:  # At least include one chunk
+                selected_chunks.append(chunk)
+                break
+            else:
+                break
+        
+        # Combine relevant chunks
+        relevant_text = "\n\n".join(chunk["content"] for chunk in selected_chunks)
+        
+        # Prepare the prompt
         system_prompt = """You are a professional financial analyst. You will be given multiple questions about a company's annual report.
 For each question, provide your answer in a clearly marked section. 
 Use the following format for each answer:
@@ -313,36 +523,65 @@ Please answer each of the following questions:
 For each question, follow the format specified in the instructions. Always include SCORE or CATEGORY when applicable.
 """
         
-        # Call LLM API
-        response = client.chat.completions.create(
-            model=llm_model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.2,
-            max_tokens=3000  # 增加token以容纳更多回答
-        )
+        # Check cache
+        cache_key = f"{system_prompt}\n{user_prompt}"
+        cached_response = response_cache.get_cached_response(cache_key, llm_model)
         
-        response_text = response.choices[0].message.content
+        if cached_response:
+            logger.info(f"Using cached batch response for {company_code} {year}")
+            
+            # Parse cached response
+            parsed_responses = {}
+            for question_key in questions.keys():
+                pattern = rf"{question_key.upper()}:\s(.*?)(?=\n[A-Z_]+:|$)"
+                match = re.search(pattern, cached_response, re.DOTALL)
+                if match:
+                    parsed_responses[question_key] = match.group(1).strip()
+                else:
+                    parsed_responses[question_key] = "Failed to extract response for this question."
+            
+            return parsed_responses
         
-        # Analyze the answers and separate the answers of each question
-        parsed_responses = {}
-        for question_key in questions.keys():
-            pattern = rf"{question_key.upper()}:\s(.*?)(?=\n[A-Z_]+:|$)"
-            match = re.search(pattern, response_text, re.DOTALL)
-            if match:
-                parsed_responses[question_key] = match.group(1).strip()
+        # Call LLM API if not in cache
+        if "gpt" in llm_model.lower() or "openai" in llm_model.lower():
+            client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+            response = client.chat.completions.create(
+                model=llm_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.2,
+                max_tokens=3000
+            )
+            
+            response_text = response.choices[0].message.content
+            
+            # Cache the full response
+            response_cache.cache_response(cache_key, llm_model, response_text)
+            
+            # Parse responses for each question
+            parsed_responses = {}
+            for question_key in questions.keys():
+                pattern = rf"{question_key.upper()}:\s(.*?)(?=\n[A-Z_]+:|$)"
+                match = re.search(pattern, response_text, re.DOTALL)
+                if match:
+                    parsed_responses[question_key] = match.group(1).strip()
+                else:
+                    parsed_responses[question_key] = "Failed to extract response for this question."
+            
+            return parsed_responses
         
-        return parsed_responses
+        else:
+            raise ValueError(f"Unsupported LLM model: {llm_model}")
     
     except Exception as e:
         logger.error(f"Error in batch query for {company_code} {year}: {e}")
-        return {}
+        return {key: f"Error: {str(e)}" for key in questions.keys()}
 
-def generate_features(embeddings_dir, output_dir, llm_model, embedding_model, questions_path=None, max_tokens_per_call=12000):
+def generate_features(embeddings_dir, output_dir, llm_model, embedding_model, questions_path=None, max_tokens_per_call=12000, incremental=True):
     """
-    Generate features for all companies using LLM analysis
+    Generate features for all companies using LLM analysis with incremental processing
     
     Args:
         embeddings_dir (str): Directory containing vector database
@@ -351,12 +590,29 @@ def generate_features(embeddings_dir, output_dir, llm_model, embedding_model, qu
         embedding_model (str): Embedding model name
         questions_path (str): Path to questions file
         max_tokens_per_call (int): Maximum tokens per LLM call
+        incremental (bool): Whether to skip already processed entries
         
     Returns:
         pd.DataFrame: Combined features for all companies
     """
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
+    
+    # Check for existing features for incremental processing
+    existing_features = {}
+    features_path = os.path.join(output_dir, "llm_features.csv")
+    
+    if incremental and os.path.exists(features_path):
+        try:
+            existing_df = pd.read_csv(features_path, encoding='utf-8-sig')
+            # Create index of company and year pairs
+            for _, row in existing_df.iterrows():
+                if 'company_code' in row and 'report_year' in row:
+                    key = f"{row['company_code']}_{row['report_year']}"
+                    existing_features[key] = True
+            logger.info(f"Found {len(existing_features)} existing feature entries for incremental processing")
+        except Exception as e:
+            logger.error(f"Error loading existing features: {e}")
     
     # Load questions
     questions = load_questions(questions_path)
@@ -399,6 +655,12 @@ def generate_features(embeddings_dir, output_dir, llm_model, embedding_model, qu
         
         # Process each year
         for year in years:
+            # Check if already processed (incremental mode)
+            key = f"{company_code}_{year}"
+            if incremental and key in existing_features:
+                logger.info(f"Skipping already processed {company_code} {year}")
+                continue
+                
             features = {
                 "company_code": company_code,
                 "report_year": year,
@@ -407,14 +669,9 @@ def generate_features(embeddings_dir, output_dir, llm_model, embedding_model, qu
             
             responses = {}
             
-
-            # batch processing version
-            # Collect all questions into one batch
-            batch_questions = {}
-            for question_key, question_data in questions.items():
-                batch_questions[question_key] = question_data
+            # Batch processing approach
+            batch_questions = {k: v for k, v in questions.items()}
             
-            # Call batch query function
             logger.info(f"Batch querying LLM for {company_code} {year} with {len(batch_questions)} questions")
             batch_responses = query_llm_batch(
                 client=client,
@@ -426,17 +683,17 @@ def generate_features(embeddings_dir, output_dir, llm_model, embedding_model, qu
                 max_tokens_per_call=max_tokens_per_call
             )
             
-            # Handle responses to each problem
+            # Process batch responses
             for question_key, response in batch_responses.items():
                 try:
-                    # Get the question details
+                    # Get question details
                     question_data = questions[question_key]
                     question_type = question_data.get("type", "numeric")
                     
                     # Store full response
                     responses[question_key] = response
                     
-                    #Extract structured data
+                    # Extract structured data
                     if question_type == "numeric":
                         score_range = question_data.get("score_range", [1, 10])
                         score = extract_score_from_response(response, score_range)
@@ -450,7 +707,7 @@ def generate_features(embeddings_dir, output_dir, llm_model, embedding_model, qu
                 except Exception as e:
                     logger.error(f"Error processing response for question {question_key} for {company_code} {year}: {e}")
                     continue
-        
+            
             # Store full responses in a separate file
             responses_dir = os.path.join(output_dir, "responses")
             os.makedirs(responses_dir, exist_ok=True)
@@ -462,30 +719,86 @@ def generate_features(embeddings_dir, output_dir, llm_model, embedding_model, qu
             # Add to features list
             all_features.append(features)
     
-    if not all_features:
-        logger.error("No features generated for any company")
-        return None
-    
-    # Combine all features
-    features_df = pd.DataFrame(all_features)
+    # Handle existing features in incremental mode
+    if incremental and os.path.exists(features_path):
+        try:
+            # Load existing features
+            existing_df = pd.read_csv(features_path, encoding='utf-8-sig')
+            
+            # Only create new DataFrame if we have new features
+            if all_features:
+                # Create DataFrame with new features
+                new_features_df = pd.DataFrame(all_features)
+                
+                # Combine with existing features
+                features_df = pd.concat([existing_df, new_features_df], ignore_index=True)
+                
+                logger.info(f"Combined {len(existing_df)} existing and {len(new_features_df)} new feature entries")
+            else:
+                features_df = existing_df
+                logger.info("No new features to add, using existing features")
+                
+        except Exception as e:
+            logger.error(f"Error combining features: {e}")
+            if all_features:
+                features_df = pd.DataFrame(all_features)
+            else:
+                return None
+    else:
+        # No existing features or not in incremental mode
+        if not all_features:
+            logger.error("No features generated for any company")
+            return None
+        
+        features_df = pd.DataFrame(all_features)
     
     # Save features
-    features_path = os.path.join(output_dir, "llm_features.csv")
     features_df.to_csv(features_path, index=False, encoding='utf-8-sig')
     
     logger.info(f"Generated features for {len(features_df)} reports. Saved to {features_path}")
     return features_df
 
-
-
-def generate_features_parallel(embeddings_dir, output_dir, llm_model, embedding_model, questions_path=None, max_tokens_per_call=12000, max_workers=4):
+def generate_features_parallel(embeddings_dir, output_dir, llm_model, embedding_model, questions_path=None, max_tokens_per_call=12000, max_workers=4, incremental=True):
     """
     Generate features for all companies using LLM analysis with parallel processing
+    
+    Args:
+        embeddings_dir (str): Directory containing vector database
+        output_dir (str): Directory to save features
+        llm_model (str): LLM model name
+        embedding_model (str): Embedding model name
+        questions_path (str): Path to questions file
+        max_tokens_per_call (int): Maximum tokens per LLM call
+        max_workers (int): Maximum number of worker threads
+        incremental (bool): Whether to skip already processed entries
+    
+    Returns:
+        pd.DataFrame: Combined features for all companies
     """
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Check for existing features for incremental processing
+    existing_features = {}
+    features_path = os.path.join(output_dir, "llm_features.csv")
+    
+    if incremental and os.path.exists(features_path):
+        try:
+            existing_df = pd.read_csv(features_path, encoding='utf-8-sig')
+            # Create index of company and year pairs
+            for _, row in existing_df.iterrows():
+                if 'company_code' in row and 'report_year' in row:
+                    key = f"{row['company_code']}_{row['report_year']}"
+                    existing_features[key] = True
+            logger.info(f"Found {len(existing_features)} existing feature entries for incremental processing")
+        except Exception as e:
+            logger.error(f"Error loading existing features: {e}")
+    
     # Load questions
     questions = load_questions(questions_path)
     
     # Connect to vector database
+
     client, embedding_func = connect_to_vector_db(embeddings_dir, embedding_model)
     
     # Get company collections
@@ -498,7 +811,7 @@ def generate_features_parallel(embeddings_dir, output_dir, llm_model, embedding_
     all_features = []
     
     def process_company(collection_name):
-        """Process a single company"""
+        """Process a single company and its reports"""
         company_features = []
         company_code = collection_name.replace("company_", "")
         
@@ -524,6 +837,12 @@ def generate_features_parallel(embeddings_dir, output_dir, llm_model, embedding_
             
             # Process each year
             for year in years:
+                # Check if already processed (incremental mode)
+                key = f"{company_code}_{year}"
+                if incremental and key in existing_features:
+                    logger.info(f"Skipping already processed {company_code} {year}")
+                    continue
+                
                 features = {
                     "company_code": company_code,
                     "report_year": year,
@@ -598,20 +917,45 @@ def generate_features_parallel(embeddings_dir, output_dir, llm_model, embedding_
             except Exception as e:
                 logger.error(f"Error getting results for company {company_name}: {e}")
     
-    if not all_features:
-        logger.error("No features generated for any company")
-        return None
-    
-    # Combine all features
-    features_df = pd.DataFrame(all_features)
+    # Handle existing features in incremental mode
+    if incremental and os.path.exists(features_path):
+        try:
+            # Load existing features
+            existing_df = pd.read_csv(features_path, encoding='utf-8-sig')
+            
+            # Only create new DataFrame if we have new features
+            if all_features:
+                # Create DataFrame with new features
+                new_features_df = pd.DataFrame(all_features)
+                
+                # Combine with existing features
+                features_df = pd.concat([existing_df, new_features_df], ignore_index=True)
+                
+                logger.info(f"Combined {len(existing_df)} existing and {len(new_features_df)} new feature entries")
+            else:
+                features_df = existing_df
+                logger.info("No new features to add, using existing features")
+                
+        except Exception as e:
+            logger.error(f"Error combining features: {e}")
+            if all_features:
+                features_df = pd.DataFrame(all_features)
+            else:
+                return None
+    else:
+        # No existing features or not in incremental mode
+        if not all_features:
+            logger.error("No features generated for any company")
+            return None
+        
+        features_df = pd.DataFrame(all_features)
     
     # Save features
-    features_path = os.path.join(output_dir, "llm_features.csv")
     features_df.to_csv(features_path, index=False, encoding='utf-8-sig')
     
     logger.info(f"Generated features for {len(features_df)} reports. Saved to {features_path}")
     return features_df
-    
+
 def main():
     """Main function to run the feature generation process"""
     parser = argparse.ArgumentParser(description='Generate features from annual reports using LLM')
@@ -620,7 +964,11 @@ def main():
     parser.add_argument('--questions_path', type=str, default='config/questions.json',
                         help='Path to questions file')
     parser.add_argument('--parallel', action='store_true', 
-                       help='Use parallel processing')
+                        help='Use parallel processing')
+    parser.add_argument('--incremental', action='store_true', 
+                        help='Use incremental processing (skip existing entries)')
+    parser.add_argument('--max_workers', type=int, default=4,
+                        help='Maximum number of worker threads for parallel processing')
     args = parser.parse_args()
     
     # Load configuration
@@ -641,7 +989,9 @@ def main():
             llm_model=llm_model,
             embedding_model=embedding_model,
             questions_path=args.questions_path,
-            max_tokens_per_call=max_tokens_per_call
+            max_tokens_per_call=max_tokens_per_call,
+            max_workers=args.max_workers,
+            incremental=args.incremental
         )
     else:
         generate_features(
@@ -650,7 +1000,8 @@ def main():
             llm_model=llm_model,
             embedding_model=embedding_model,
             questions_path=args.questions_path,
-            max_tokens_per_call=max_tokens_per_call
+            max_tokens_per_call=max_tokens_per_call,
+            incremental=args.incremental
         )
 
 if __name__ == "__main__":
