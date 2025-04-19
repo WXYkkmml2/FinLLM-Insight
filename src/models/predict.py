@@ -543,32 +543,20 @@ def create_prediction_summary(predictions_df, model_info, output_dir, timestamp=
 
 def predict_returns(features_path, model_path=None, info_path=None, output_dir=None, 
                   model_type='regression', target_window=60, create_summary=True):
-    """
-    Main prediction function
-    
-    Args:
-        features_path (str): Path to features CSV
-        model_path (str): Path to model file, or None to use latest
-        info_path (str): Path to model info file, or None to use latest
-        output_dir (str): Directory to save results
-        model_type (str): Model type to use if finding latest
-        target_window (int): Target window to use if finding latest
-        create_summary (bool): Whether to create summary HTML
-        
-    Returns:
-        pd.DataFrame: Predictions dataframe
-    """
     try:
         # Load features
         features_df = load_features(features_path)
         
         # If model_path not provided, find latest model
         if model_path is None:
-            if output_dir is None:
-                logger.error("Either model_path or output_dir must be provided")
-                return None
+            models_dir = os.path.join(os.path.dirname(os.path.dirname(output_dir)), 'models')
+            if not os.path.exists(models_dir):
+                # If the models directory cannot be found by default path, try using output_dir's parent directory
+                models_dir = os.path.dirname(output_dir)
+                if not os.path.exists(os.path.join(models_dir, 'models')):
+                    #If the parent directory does not have a models subdirectory, then use the models directory in the current directory directly
+                    models_dir = './models'
             
-            models_dir = os.path.dirname(output_dir)
             model_path, info_path = find_latest_model(models_dir, model_type, target_window)
             
             if model_path is None:
@@ -631,6 +619,8 @@ def main():
     features_dir = config.get('features_directory', './data/processed/features')
     models_dir = config.get('models_directory', './models')
     predictions_dir = config.get('predictions_directory', './predictions')
+    
+    os.makedirs(predictions_dir, exist_ok=True)
     
     # Use command line args or config for target window
     target_window = args.target_window or config.get('target_window', 60)
