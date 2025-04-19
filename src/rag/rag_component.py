@@ -5,8 +5,14 @@
 RAG (Retrieval-Augmented Generation) Component for FinLLM-Insight
 This module provides interactive query capabilities for annual report content.
 """
-
 import os
+import sys
+project_root = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+
+
 import json
 import argparse
 import logging
