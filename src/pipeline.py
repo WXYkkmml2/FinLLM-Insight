@@ -5,7 +5,12 @@
 Complete Processing Pipeline for FinLLM-Insight
 This module integrates all components of the system for end-to-end execution.
 """
-
+import os
+import sys
+project_root = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+    
 import os
 import sys
 import json
