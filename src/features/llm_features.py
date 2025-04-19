@@ -20,7 +20,6 @@ from datetime import datetime
 import hashlib
 
 # For LLM API calls
-import openai
 from openai import OpenAI
 
 # For vector database interaction
