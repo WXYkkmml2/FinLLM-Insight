@@ -410,6 +410,7 @@ class FinancialReportRAG:
             # Keep only top results across all collections
             relevant_chunks = sorted(relevant_chunks, key=lambda x: x.get("score", 0), reverse=True)[:max_results]
             
+
             if not relevant_chunks:
                 return {
                     "answer": "No relevant information found for your question. Please try rephrasing your question or specify a company code.",
@@ -447,13 +448,17 @@ Here are relevant annual report excerpts:
 
 Please answer the question based on these annual report excerpts. If the information is insufficient, please clearly indicate this."""
             
+
             try:
                 messages = [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
-                ]
-                
-                # Use the retry mechanism
+                ] 
+                # Request failed with status code 429
+                if not self.llm_client:
+                    raise ValueError("LLM client not initialized")
+                    
+                #Request failed with status code 429
                 response = self.call_llm_with_retry(self.llm_model, messages)
                 
                 answer = response.choices[0].message.content
@@ -462,20 +467,23 @@ Please answer the question based on these annual report excerpts. If the informa
                     "answer": answer,
                     "sources": sources
                 }
-            
+                
             except Exception as e:
+                error_message = f"Sorry, I encountered an error generating the answer. Error details: {str(e)}"
                 logger.error(f"Error generating answer: {e}")
                 return {
-                    "answer": f"Error while generating the answer: {str(e)}",
+                    "answer": error_message,
                     "sources": sources
                 }
         
         except Exception as e:
-            logger.error(f"Error in query: {e}")
+           
+            logger.error(f"Error in query: {e}", exc_info=True)
             return {
-                "answer": f"Error processing query: {str(e)}",
+                "answer": "I'm sorry, but I encountered a technical problem while processing your question. Please try again later or contact support if the problem persists.",
                 "sources": []
-            }
+            }            
+           
 
 def interactive_cli(rag_system):
     """
@@ -547,6 +555,7 @@ def interactive_cli(rag_system):
         
         print(f"\nQuery time: {end_time - start_time:.2f} seconds")
 
+
 def main():
     """Main function to run the RAG component"""
     parser = argparse.ArgumentParser(description='RAG component for financial report analysis')
@@ -556,17 +565,26 @@ def main():
                         help='Run in interactive mode')
     args = parser.parse_args()
     
-    # Initialize RAG system
-    rag_system = FinancialReportRAG(config_path=args.config_path)
-    
-    # Run in interactive mode if specified
-    if args.interactive:
-        interactive_cli(rag_system)
-    else:
-        # Print usage information
-        print("RAG system initialized.")
-        print("Use this module by importing the FinancialReportRAG class.")
-        print("For interactive mode, run with --interactive flag.")
+    try:
+        # Initialize RAG system
+        logger.info("Initializing RAG system...")
+        rag_system = FinancialReportRAG(config_path=args.config_path)
+        
+        # Run in interactive mode if specified
+        if args.interactive:
+            interactive_cli(rag_system)
+        else:
+            # Print usage information
+            print("RAG system initialized successfully.")
+            print("Use this module by importing the FinancialReportRAG class.")
+            print("For interactive mode, run with --interactive flag.")
+        
+        return 0
+    except Exception as e:
+        logger.critical(f"Failed to initialize or run RAG system: {e}", exc_info=True)
+        print(f"ERROR: {str(e)}")
+        print("Check the log file for more details.")
+        return 1
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
