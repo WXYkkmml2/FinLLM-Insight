@@ -1,4 +1,4 @@
----跑代码看的--
+---自己人看的--
 # FinLLM-Insight 使用指南
 
 
@@ -18,20 +18,14 @@ pip install -r requirements.txt
 ### 2. 配置 API 密钥（重要！）
 
 项目依赖 OpenAI API 来生成分析结果，所以需要设置 API 密钥：
-
-1. 在项目根目录创建 `.env` 文件：
-   ```bash
-   cp .env.example .env
-   ```
-
-2. **编辑 `.env` 文件，添加你的 API 密钥**：
+ **编辑 `.env` 文件，添加你的 API 密钥**：
    ```
    OPENAI_API_KEY=你的OpenAI密钥
    ```
    
    **⚠️ 注意：没有配置正确的 API 密钥，程序将无法正常运行！**
 
-3. 如果你需要用到 HuggingFace 的模型，也可以添加：
+如果你需要用到 HuggingFace 的模型，也可以添加：
    ```
    HUGGINGFACE_API_KEY=你的HuggingFace密钥
    ```
