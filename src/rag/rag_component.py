@@ -45,30 +45,55 @@ class FinancialReportRAG:
     """
     RAG system for financial report analysis
     """
+    
+ 
     def __init__(self, config_path='config/config.json'):
-        """
-        Initialize the RAG system
+    """
+    Initialize the RAG system
+    
+    Args:
+        config_path (str): Path to configuration file
         
-        Args:
-            config_path (str): Path to configuration file
-        """
+    Raises:
+        RuntimeError: If critical components initialization fails
+    """
+    try:
         self.config = self._load_config(config_path)
         self.llm_model = self.config.get('llm_model', 'gpt-3.5-turbo-16k')
         self.embedding_model = self.config.get('embedding_model', 'BAAI/bge-large-zh-v1.5')
         self.embeddings_dir = self.config.get('embeddings_directory', './data/processed/embeddings')
         self.max_tokens = self.config.get('max_tokens_per_call', 12000)
         
-        # Initialize vector DB
-        self.db_client, self.embedding_func = self._connect_to_vector_db()
+        # Initialize vector DB - critical component
+        try:
+            self.db_client, self.embedding_func = self._connect_to_vector_db()
+        except Exception as e:
+            logger.error(f"Failed to connect to vector database: {e}")
+            raise RuntimeError(f"Vector database connection failed: {e}") from e
         
-        # Load company metadata
-        self.companies = self._load_company_metadata()
+        # Load company metadata - critical component
+        try:
+            self.companies = self._load_company_metadata()
+            if not self.companies:
+                logger.error("No company metadata could be loaded")
+                raise RuntimeError("No company data available in the system")
+        except Exception as e:
+            logger.error(f"Failed to load company metadata: {e}")
+            raise RuntimeError(f"Company metadata loading failed: {e}") from e
         
-        # Load LLM client
-        self.llm_client = self._initialize_llm_client()
+        # Load LLM client - critical component
+        try:
+            self.llm_client = self._initialize_llm_client()
+            if not self.llm_client:
+                raise RuntimeError("LLM client initialization returned None")
+        except Exception as e:
+            logger.error(f"Failed to initialize LLM client: {e}")
+            raise RuntimeError(f"LLM client initialization failed: {e}") from e
         
         logger.info("RAG system initialized successfully")
-    
+    except Exception as e:
+        logger.critical(f"RAG system initialization failed: {e}")
+        raise
     def _load_config(self, config_path):
         """
         Load configuration from JSON file
