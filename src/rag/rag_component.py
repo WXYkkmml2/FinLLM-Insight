@@ -46,54 +46,54 @@ class FinancialReportRAG:
     RAG system for financial report analysis
     """
     
- 
     def __init__(self, config_path='config/config.json'):
-    """
-    Initialize the RAG system
-    
-    Args:
-        config_path (str): Path to configuration file
+        """
+        Initialize the RAG system
         
-    Raises:
-        RuntimeError: If critical components initialization fails
-    """
-    try:
-        self.config = self._load_config(config_path)
-        self.llm_model = self.config.get('llm_model', 'gpt-3.5-turbo-16k')
-        self.embedding_model = self.config.get('embedding_model', 'BAAI/bge-large-zh-v1.5')
-        self.embeddings_dir = self.config.get('embeddings_directory', './data/processed/embeddings')
-        self.max_tokens = self.config.get('max_tokens_per_call', 12000)
-        
-        # Initialize vector DB - critical component
+        Args:
+            config_path (str): Path to configuration file
+            
+        Raises:
+            RuntimeError: If critical components initialization fails
+        """
         try:
-            self.db_client, self.embedding_func = self._connect_to_vector_db()
+            self.config = self._load_config(config_path)
+            self.llm_model = self.config.get('llm_model', 'gpt-3.5-turbo-16k')
+            self.embedding_model = self.config.get('embedding_model', 'BAAI/bge-large-zh-v1.5')
+            self.embeddings_dir = self.config.get('embeddings_directory', './data/processed/embeddings')
+            self.max_tokens = self.config.get('max_tokens_per_call', 12000)
+            
+            # Initialize vector DB - critical component
+            try:
+                self.db_client, self.embedding_func = self._connect_to_vector_db()
+            except Exception as e:
+                logger.error(f"Failed to connect to vector database: {e}")
+                raise RuntimeError(f"Vector database connection failed: {e}") from e
+            
+            # Load company metadata - critical component
+            try:
+                self.companies = self._load_company_metadata()
+                if not self.companies:
+                    logger.error("No company metadata could be loaded")
+                    raise RuntimeError("No company data available in the system")
+            except Exception as e:
+                logger.error(f"Failed to load company metadata: {e}")
+                raise RuntimeError(f"Company metadata loading failed: {e}") from e
+            
+            # Load LLM client - critical component
+            try:
+                self.llm_client = self._initialize_llm_client()
+                if not self.llm_client:
+                    raise RuntimeError("LLM client initialization returned None")
+            except Exception as e:
+                logger.error(f"Failed to initialize LLM client: {e}")
+                raise RuntimeError(f"LLM client initialization failed: {e}") from e
+            
+            logger.info("RAG system initialized successfully")
         except Exception as e:
-            logger.error(f"Failed to connect to vector database: {e}")
-            raise RuntimeError(f"Vector database connection failed: {e}") from e
-        
-        # Load company metadata - critical component
-        try:
-            self.companies = self._load_company_metadata()
-            if not self.companies:
-                logger.error("No company metadata could be loaded")
-                raise RuntimeError("No company data available in the system")
-        except Exception as e:
-            logger.error(f"Failed to load company metadata: {e}")
-            raise RuntimeError(f"Company metadata loading failed: {e}") from e
-        
-        # Load LLM client - critical component
-        try:
-            self.llm_client = self._initialize_llm_client()
-            if not self.llm_client:
-                raise RuntimeError("LLM client initialization returned None")
-        except Exception as e:
-            logger.error(f"Failed to initialize LLM client: {e}")
-            raise RuntimeError(f"LLM client initialization failed: {e}") from e
-        
-        logger.info("RAG system initialized successfully")
-    except Exception as e:
-        logger.critical(f"RAG system initialization failed: {e}")
-        raise
+            logger.critical(f"RAG system initialization failed: {e}")
+            raise
+
     def _load_config(self, config_path):
         """
         Load configuration from JSON file
@@ -113,67 +113,68 @@ class FinancialReportRAG:
             raise
     
     def _connect_to_vector_db(self):
-    """
-    Connect to vector database
-    
-    Returns:
-        tuple: (ChromaDB client, embedding function)
+        """
+        Connect to vector database
         
-    Raises:
-        ValueError: If embedding model configuration is invalid
-        ConnectionError: If database connection fails
-    """
-    # Verify embedding model configuration
-    if not self.embedding_model:
-        raise ValueError("Embedding model not specified in configuration")
-    
-    # Create embedding function
-    try:
-        if self.embedding_model.lower() == "openai":
-            # Verify API key is available
-            api_key = os.environ.get("OPENAI_API_KEY")
-            if not api_key:
-                raise ValueError("OpenAI API key not found in environment variables")
-                
-            # Use OpenAI's embeddings
-            openai_ef = embedding_functions.OpenAIEmbeddingFunction(
-                api_key=api_key,
-                model_name="text-embedding-ada-002"
-            )
-            embedding_func = openai_ef
-        else:
-            # Use Hugging Face models
-            huggingface_ef = embedding_functions.HuggingFaceEmbeddingFunction(
-                api_key=os.environ.get("HUGGINGFACE_API_KEY", None),
-                model_name=self.embedding_model
-            )
-            embedding_func = huggingface_ef
-    except Exception as e:
-        logger.error(f"Failed to create embedding function: {e}")
-        raise ValueError(f"Failed to create embedding function: {e}") from e
-    
-    # Verify database path
-    db_path = os.path.join(self.embeddings_dir, "chroma_db")
-    if not os.path.exists(self.embeddings_dir):
-        logger.warning(f"Embeddings directory does not exist: {self.embeddings_dir}")
-        os.makedirs(self.embeddings_dir, exist_ok=True)
-        logger.info(f"Created embeddings directory: {self.embeddings_dir}")
-    
-    # Create client
-    try:
-        client = chromadb.Client(Settings(
-            chroma_db_impl="duckdb+parquet",
-            persist_directory=db_path
-        ))
+        Returns:
+            tuple: (ChromaDB client, embedding function)
+            
+        Raises:
+            ValueError: If embedding model configuration is invalid
+            ConnectionError: If database connection fails
+        """
+        # Verify embedding model configuration
+        if not self.embedding_model:
+            raise ValueError("Embedding model not specified in configuration")
         
-        # Verify connection by testing a simple operation
-        collections = client.list_collections()
-        logger.info(f"Connected to vector database with {len(collections)} collections")
-        return client, embedding_func
-    
-    except Exception as e:
-        logger.error(f"Failed to connect to vector database: {e}")
-        raise ConnectionError(f"Vector database connection failed: {e}") from e
+        # Create embedding function
+        try:
+            if self.embedding_model.lower() == "openai":
+                # Verify API key is available
+                api_key = os.environ.get("OPENAI_API_KEY")
+                if not api_key:
+                    raise ValueError("OpenAI API key not found in environment variables")
+                    
+                # Use OpenAI's embeddings
+                openai_ef = embedding_functions.OpenAIEmbeddingFunction(
+                    api_key=api_key,
+                    model_name="text-embedding-ada-002"
+                )
+                embedding_func = openai_ef
+            else:
+                # Use Hugging Face models
+                huggingface_ef = embedding_functions.HuggingFaceEmbeddingFunction(
+                    api_key=os.environ.get("HUGGINGFACE_API_KEY", None),
+                    model_name=self.embedding_model
+                )
+                embedding_func = huggingface_ef
+        except Exception as e:
+            logger.error(f"Failed to create embedding function: {e}")
+            raise ValueError(f"Failed to create embedding function: {e}") from e
+        
+        # Verify database path
+        db_path = os.path.join(self.embeddings_dir, "chroma_db")
+        if not os.path.exists(self.embeddings_dir):
+            logger.warning(f"Embeddings directory does not exist: {self.embeddings_dir}")
+            os.makedirs(self.embeddings_dir, exist_ok=True)
+            logger.info(f"Created embeddings directory: {self.embeddings_dir}")
+        
+        # Create client
+        try:
+            client = chromadb.Client(Settings(
+                chroma_db_impl="duckdb+parquet",
+                persist_directory=db_path
+            ))
+            
+            # Verify connection by testing a simple operation
+            collections = client.list_collections()
+            logger.info(f"Connected to vector database with {len(collections)} collections")
+            return client, embedding_func
+        
+        except Exception as e:
+            logger.error(f"Failed to connect to vector database: {e}")
+            raise ConnectionError(f"Vector database connection failed: {e}") from e
+
     def _load_company_metadata(self):
         """
         Load company metadata
@@ -366,7 +367,7 @@ class FinancialReportRAG:
                 except Exception as e:
                     logger.error(f"Error querying collection {collection_name}: {e}")
 
-             # If no company specified or no results found, query all collections
+            # If no company specified or no results found, query all collections
             if not company_code or not relevant_chunks:
                 collections = self.db_client.list_collections()
                 
