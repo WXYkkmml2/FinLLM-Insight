@@ -1,3 +1,115 @@
+---跑代码看的--
+# FinLLM-Insight 使用指南
+
+
+## 环境配置
+
+### 1. 克隆仓库并安装依赖
+
+```bash
+# 克隆仓库
+git clone https://github.com/WXYkkmml2/FinLLM-Insight.git
+cd FinLLM-Insight
+
+# 安装依赖
+pip install -r requirements.txt
+```
+
+### 2. 配置 API 密钥（重要！）
+
+项目依赖 OpenAI API 来生成分析结果，所以需要设置 API 密钥：
+
+1. 在项目根目录创建 `.env` 文件：
+   ```bash
+   cp .env.example .env
+   ```
+
+2. **编辑 `.env` 文件，添加你的 API 密钥**：
+   ```
+   OPENAI_API_KEY=你的OpenAI密钥
+   ```
+   
+   **⚠️ 注意：没有配置正确的 API 密钥，程序将无法正常运行！**
+
+3. 如果你需要用到 HuggingFace 的模型，也可以添加：
+   ```
+   HUGGINGFACE_API_KEY=你的HuggingFace密钥
+   ```
+
+### 3. 调整配置（可选）
+
+根据需要修改 `config/config.json` 中的设置：
+- 调整数据下载参数
+- 修改使用的模型
+- 设置预测时间窗口
+
+## 运行项目
+
+### 完整流水线
+
+如果你想运行完整处理流程：
+
+```bash
+python src/pipeline.py
+```
+
+这会依次执行：
+1. 下载年报数据
+2. 转换报告格式
+3. 生成目标变量
+4. 生成文本嵌入
+5. 生成 LLM 特征
+6. 训练预测模型
+7. 生成预测结果
+
+### 单步运行
+
+如果只想运行特定步骤：
+
+```bash
+# 例如：只下载年报
+python src/pipeline.py --step 1
+
+# 只训练模型
+python src/pipeline.py --step 6
+```
+
+### 交互式查询
+
+项目还提供了交互式查询功能，可以直接提问关于年报内容的问题：
+
+```bash
+python src/rag/rag_component.py --interactive
+```
+
+## 常见问题解决
+
+### API 密钥相关错误
+
+如果遇到类似 `openai.error.AuthenticationError` 或 `API key not found` 这样的错误：
+
+1. 检查 `.env` 文件是否创建，并且包含正确的 API 密钥
+2. 确保密钥格式正确（通常以 `sk-` 开头）
+3. 重启程序以重新加载环境变量
+
+### 网络连接问题
+
+在中国大陆地区使用 OpenAI API 可能需要代理。你可以:
+
+1. 设置系统代理
+2. 或使用支持国内访问的替代 API 服务
+
+### 目录结构问题
+
+如果遇到找不到文件或目录的错误：
+
+1. 确保在项目根目录下运行命令
+2. 手动创建缺失的目录（如 `data/raw/annual_reports`）
+
+
+
+
+---给别人看的---
 # FinLLM-Insight
 
 
