@@ -27,26 +27,6 @@ import chromadb
 from chromadb.config import Settings
 from chromadb.utils import embedding_functions
 
-def call_llm_with_retry(client, model, messages, max_retries=3, initial_delay=1):
-    """Call LLM API with retry mechanism"""
-    for attempt in range(max_retries):
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0.2,
-                max_tokens=2000
-            )
-            return response
-        except Exception as e:
-            wait_time = initial_delay * (2 ** attempt)
-            logger.warning(f"LLM API call attempt {attempt+1}/{max_retries} failed: {e}. Retrying in {wait_time}s...")
-            time.sleep(wait_time)
-    
-    logger.error(f"LLM API call failed after {max_retries} attempts")
-    raise Exception(f"Failed to call LLM API after {max_retries} attempts")
-    
-
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -98,6 +78,25 @@ class LLMResponseCache:
 
 # Initialize cache
 response_cache = LLMResponseCache()
+
+def call_llm_with_retry(client, model, messages, max_retries=3, initial_delay=1):
+    """Call LLM API with retry mechanism"""
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=0.2,
+                max_tokens=2000
+            )
+            return response
+        except Exception as e:
+            wait_time = initial_delay * (2 ** attempt)
+            logger.warning(f"LLM API call attempt {attempt+1}/{max_retries} failed: {e}. Retrying in {wait_time}s...")
+            time.sleep(wait_time)
+    
+    logger.error(f"LLM API call failed after {max_retries} attempts")
+    raise Exception(f"Failed to call LLM API after {max_retries} attempts")
 
 def load_config(config_path):
     """
