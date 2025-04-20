@@ -16,6 +16,7 @@ import time
 import json
 import argparse
 import logging
+import requests 
 from datetime import datetime
 from pathlib import Path
 
