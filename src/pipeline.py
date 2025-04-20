@@ -10,7 +10,26 @@ import sys
 project_root = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
+
+# Loading .env file
+from dotenv import load_dotenv
+#Try to load .env file, allow failed
+try:
+    env_path = os.path.join(project_root, '.env')
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
+        print(f"Loaded environment variables from {env_path}")
+    else:
+        load_dotenv()
+        print("Loaded environment variables from .env file in current directory")
+except ImportError:
+    print("WARNING: python-dotenv not installed. Environment variables may not be properly loaded.")
+    print("Install with: pip install python-dotenv")
     
+#Verify that the critical environment variable exists
+if not os.environ.get("OPENAI_API_KEY"):
+    print("WARNING: OPENAI_API_KEY environment variable not found. API calls may fail.")
+
 import os
 import sys
 import json
