@@ -1,8 +1,3 @@
-我将为您准备一个更新版的 README 文件和一个适合项目的 `.env.example` 文件。
-
-## 更新版 README.md
-
-```markdown
 # FinLLM-Insight
 
 
