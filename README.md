@@ -1,3 +1,8 @@
+我将为您准备一个更新版的 README 文件和一个适合项目的 `.env.example` 文件。
+
+## 更新版 README.md
+
+```markdown
 # FinLLM-Insight
 
 
@@ -83,25 +88,22 @@ cd FinLLM-Insight
 
 # 安装依赖
 pip install -r requirements.txt
-
-# 或使用setup.py安装
-pip install -e .
 ```
 
-### 配置
+### 环境配置
 
-1. 创建环境变量文件
+1. 创建环境变量文件：
 ```bash
 cp .env.example .env
 ```
 
-2. 编辑`.env`文件，添加你的API密钥
+2. 编辑 `.env` 文件，添加你的 API 密钥：
 ```
-OPENAI_API_KEY=your_openai_api_key
-HUGGINGFACE_API_KEY=your_huggingface_api_key
+OPENAI_API_KEY=your_openai_api_key_here
+HUGGINGFACE_API_KEY=your_huggingface_api_key_here
 ```
 
-3. 根据需要调整`config/config.json`配置
+3. 根据需要调整 `config/config.json` 配置
 
 ### 运行
 
@@ -187,11 +189,28 @@ FinLLM-Insight/
 ├── notebooks/              # Jupyter笔记本
 ├── tests/                  # 测试代码
 ├── docs/                   # 文档
+├── .env.example            # 环境变量示例文件
 ├── LICENSE                 # 许可证
 ├── README.md               # 项目说明
 ├── requirements.txt        # 依赖列表
 └── setup.py                # 安装脚本
 ```
+
+## 常见问题
+
+### API密钥配置
+
+如果遇到"API key not found"或类似错误，请检查：
+1. 确认已创建并正确配置 `.env` 文件
+2. 确认安装了 `python-dotenv`（包含在 requirements.txt 中）
+3. 重新启动应用程序以加载环境变量
+
+### 数据下载问题
+
+如果年报下载失败：
+1. 检查网络连接
+2. 确认巨潮资讯网API的可用性
+3. 尝试增加 `download_delay` 参数的值以减少请求频率
 
 ## 贡献指南
 
@@ -206,3 +225,31 @@ FinLLM-Insight/
 ## 许可证
 
 [MIT](LICENSE) © WXYkkmml2
+```
+
+## `.env.example` 文件
+
+```
+# API密钥配置
+OPENAI_API_KEY=your_openai_api_key_here
+HUGGINGFACE_API_KEY=your_huggingface_api_key_here
+
+# 数据访问配置
+# 如果需要特殊的API访问凭证或限制可在此配置
+# AKSHARE_API_TIMEOUT=30
+
+# 服务配置
+# 运行时服务器配置（如果添加Web界面）
+# SERVER_PORT=8080
+# DEBUG_MODE=false
+
+# 其他配置
+# 如果有特殊的本地路径或其他环境特定配置，可以在此添加
+# LOCAL_DATA_PATH=/path/to/custom/data
+
+# 注意事项:
+# 1. 此文件用作模板，不要在此文件中存储真实的API密钥
+# 2. 复制此文件为.env并在其中填写你的实际密钥和配置
+# 3. .env文件不应提交到版本控制系统
+# 4. 确保已安装python-dotenv库以加载环境变量
+
