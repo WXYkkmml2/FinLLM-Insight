@@ -89,37 +89,58 @@ def get_stock_list(index_name):
         logger.info(f"Retrieving stock list for index: {index_name}")
         
         if index_name == "CSI300":
-            # Get CSI300 constituent stocks
-            stock_list = ak.index_stock_cons_csindex(symbol="000300")
-            # Extract stock codes and names
-            stock_list = stock_list[['成分券代码', '成分券名称']]
-            stock_list.columns = ['code', 'name']
-            # Format code to ensure 6 digits with leading zeros
-            stock_list['code'] = stock_list['code'].apply(lambda x: f"{x:06d}")
-        elif index_name == "CSI50":
-            # Custom processing method: Get the Shanghai and Shenzhen 300 and retain only the top 50 companies
-            stock_list = ak.index_stock_cons_csindex(symbol="000300")
-            # Extract stock codes and names
-            stock_list = stock_list[['成分券代码', '成分券名称']]
-            stock_list.columns = ['code', 'name']
-            # Format code to ensure 6 digits with leading zeros
-            stock_list['code'] = stock_list['code'].apply(lambda x: f"{x:06d}")
-            # Only keep first 50 companies
-            stock_list = stock_list.head(50)
-            logger.info(f"Limited to first 50 companies from CSI300")
+            # 使用当前最新的AKShare API获取沪深300成分股
+            try:
+                # 尝试使用index_stock_cons函数
+                stock_list = ak.index_stock_cons(symbol="000300")
+                # 找到包含代码和名称的列
+                code_columns = [col for col in stock_list.columns if '代码' in col or 'code' in col.lower()]
+                name_columns = [col for col in stock_list.columns if '名称' in col or 'name' in col.lower()]
+                
+                if code_columns and name_columns:
+                    stock_list = stock_list[[code_columns[0], name_columns[0]]]
+                    stock_list.columns = ['code', 'name']
+                else:
+                    raise ValueError("无法在返回结果中找到代码和名称列")
+            except Exception as e:
+                logger.warning(f"无法使用index_stock_cons获取沪深300成分股: {e}")
+                try:
+                    # 尝试使用stock_index_cons函数
+                    stock_list = ak.stock_index_cons(symbol="000300")
+                    # 找到包含代码和名称的列
+                    code_columns = [col for col in stock_list.columns if '代码' in col or 'code' in col.lower()]
+                    name_columns = [col for col in stock_list.columns if '名称' in col or 'name' in col.lower()]
+                    
+                    if code_columns and name_columns:
+                        stock_list = stock_list[[code_columns[0], name_columns[0]]]
+                        stock_list.columns = ['code', 'name']
+                    else:
+                        raise ValueError("无法在返回结果中找到代码和名称列")
+                except Exception as e:
+                    logger.warning(f"无法使用stock_index_cons获取沪深300成分股: {e}")
+                    # 使用stock_info_a_code_name获取所有A股，限制300只
+                    logger.info("使用股票信息API获取股票列表")
+                    stock_list = ak.stock_info_a_code_name()
+                    stock_list.columns = ['code', 'name']
+                    stock_list = stock_list.head(300)
+                    logger.info(f"限制为前300只股票从A股列表")
+            
+            # 确保代码格式正确（6位数字）
+            stock_list['code'] = stock_list['code'].astype(str).str.zfill(6)
+            
         else:
-            # Default to get all A-share stocks
+            # 默认获取所有A股股票
             stock_list = ak.stock_info_a_code_name()
             stock_list.columns = ['code', 'name']
-            # If using default, still limit to first 50 companies
+            # 如果使用默认，仍然限制为前50家公司
             stock_list = stock_list.head(50)
-            logger.info(f"Limited to first 50 companies from A-shares")
+            logger.info(f"限制为前50家公司从A股列表")
         
-        logger.info(f"Retrieved {len(stock_list)} stocks")
+        logger.info(f"获取到 {len(stock_list)} 只股票")
         return stock_list
     
     except Exception as e:
-        logger.error(f"Failed to get stock list: {e}")
+        logger.error(f"获取股票列表失败: {e}")
         raise
 
 def find_correct_column_name(df, possible_names):
