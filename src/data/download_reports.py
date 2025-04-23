@@ -122,6 +122,22 @@ def get_stock_list(index_name):
         logger.error(f"Failed to get stock list: {e}")
         raise
 
+def find_correct_column_name(df, possible_names):
+    """
+    Find the correct column name from possible options
+    
+    Args:
+        df (pd.DataFrame): DataFrame to search in
+        possible_names (list): List of possible column names
+        
+    Returns:
+        str or None: Found column name or None
+    """
+    for name in possible_names:
+        if name in df.columns:
+            return name
+    return None
+
 def download_annual_reports(stock_list, save_dir, min_year=2018, delay=2):
     """
     Download annual reports for the given stock list
@@ -152,54 +168,124 @@ def download_annual_reports(stock_list, save_dir, min_year=2018, delay=2):
         stock_name = row['name']
         
         try:
-            # Get all announcements for the stock
-            # AKShare's stock_annual_report_cninfo function fetches from CNINFO (巨潮资讯网)
-            df_announcements = ak.stock_annual_report_cninfo(symbol=stock_code)
+            # Get all announcements for the stock with pagination
+            all_announcements = []
+            page = 1
+            max_pages = 10  # 设置最大页数限制，可以根据需要调整
             
-            if df_announcements is None or len(df_announcements) == 0:
-                logger.warning(f"No reports found for {stock_code} - {stock_name}")
-                continue
-                
-
-            # 修改,筛选不是title，是公告标题！
-            annual_reports = df_announcements[
-                df_announcements['公告标题'].str.contains('年度报告|年报', case=False, na=False)
-            ]            
-            if len(annual_reports) == 0:
-                logger.warning(f"No annual reports found for {stock_code} - {stock_name}")
-                continue
-            
-            # Process each annual report
-            for _, report in annual_reports.iterrows():
-                # Extract year from the report title or publish date
-                if 'pubDate' in report:
-                    report_date = pd.to_datetime(report['pubDate'])
-                    report_year = report_date.year
-                else:
-                    # Try to extract year from title
-                    title = report['title']
-                    # Find the first occurrence of a year pattern (e.g., 2020年)
-                    import re
-                    year_pattern = re.search(r'(20\d{2})年', title)
-                    if year_pattern:
-                        report_year = int(year_pattern.group(1))
-                    else:
-                        logger.warning(f"Could not extract year from report: {title}")
-                        continue
-                
-                # Skip if report year is less than min_year
-                if report_year < min_year:
-                    continue
-                    
-                # Download the report
+            while page <= max_pages:
                 try:
-                    # Create filename: stock_code_year_report.pdf
+                    # AKShare的stock_annual_report_cninfo函数获取巨潮资讯网数据
+                    # 注意：ak.stock_annual_report_cninfo可能不接受page参数，
+                    # 如果不支持分页，可以考虑使用其他函数或修改查询策略
+                    page_data = ak.stock_annual_report_cninfo(symbol=stock_code)
+                    
+                    # 打印调试信息
+                    if page == 1:
+                        logger.info(f"获取数据的列名: {page_data.columns.tolist()}")
+                        logger.info(f"首页数据样例:\n{page_data.head(2)}")
+                    
+                    if page_data is None or len(page_data) == 0:
+                        logger.info(f"未获取到{stock_code}的公告数据或到达最后一页")
+                        break
+                    
+                    all_announcements.append(page_data)
+                    logger.info(f"获取{stock_code}的第{page}页公告，共{len(page_data)}条")
+                    
+                    # 如果数据量少于一页，说明不需要继续获取
+                    if len(page_data) < 10:
+                        break
+                    
+                    page += 1
+                    time.sleep(delay)  # 添加延迟避免请求过快
+                except Exception as e:
+                    logger.error(f"获取{stock_code}的第{page}页公告时出错: {e}")
+                    break
+            
+            # 合并所有页的数据
+            if not all_announcements:
+                logger.warning(f"没有获取到{stock_code}的任何公告数据")
+                continue
+                
+            df_announcements = pd.concat(all_announcements, ignore_index=True)
+            logger.info(f"获取到{stock_code}的公告总数: {len(df_announcements)}")
+            
+            # 确定列名（支持中英文）
+            title_column = find_correct_column_name(
+                df_announcements, 
+                ['公告标题', 'title', 'announcementTitle', '标题']
+            )
+            url_column = find_correct_column_name(
+                df_announcements,
+                ['公告链接', '公告URL', 'announcementURL', 'pdf_url', 'attachmentUrl']
+            )
+            date_column = find_correct_column_name(
+                df_announcements,
+                ['公告时间', 'pubDate', 'announcementTime', '发布时间']
+            )
+            
+            if not title_column or not url_column:
+                logger.error(f"无法找到{stock_code}的公告标题或URL列，可用列: {df_announcements.columns.tolist()}")
+                continue
+            
+            # 筛选年度报告（使用更广泛的匹配模式）
+            annual_report_patterns = [
+                '年度报告', '年报', '年度财务报告', '年度业绩报告',
+                '年年度报告', '年年报',  # 例如"2023年年度报告"
+                '年审计报告', '年财务报告'
+            ]
+            filter_pattern = '|'.join(annual_report_patterns)
+            
+            annual_reports = df_announcements[
+                df_announcements[title_column].str.contains(filter_pattern, case=False, na=False)
+            ]
+            
+            logger.info(f"找到{stock_code}的年度报告{len(annual_reports)}份")
+            if len(annual_reports) == 0:
+                # 打印部分标题，便于调试
+                logger.warning(f"未找到{stock_code}的年度报告，部分公告标题示例: {df_announcements[title_column].head(5).tolist()}")
+                continue
+            
+            # 处理每份年度报告
+            for _, report in annual_reports.iterrows():
+                try:
+                    # 从报告标题或发布日期提取年份
+                    report_year = None
+                    report_date = None
+                    
+                    # 尝试从发布日期获取年份
+                    if date_column and date_column in report and pd.notna(report[date_column]):
+                        try:
+                            report_date = pd.to_datetime(report[date_column])
+                            report_year = report_date.year
+                        except:
+                            logger.warning(f"无法解析日期: {report[date_column]}")
+                    
+                    # 如果未能从日期获取年份，尝试从标题获取
+                    if not report_year:
+                        # 尝试从标题提取年份，例如"2023年年度报告"
+                        import re
+                        title = report[title_column]
+                        year_pattern = re.search(r'(20\d{2})年', title)
+                        if year_pattern:
+                            report_year = int(year_pattern.group(1))
+                        else:
+                            # 如果无法提取年份，使用当前年份-1作为默认值
+                            logger.warning(f"无法从标题提取年份: {title}")
+                            report_year = current_year - 1
+                    
+                    # 如果报告年份小于最小年份，跳过
+                    if report_year < min_year:
+                        logger.info(f"跳过{report_year}年的报告，早于最小年份{min_year}")
+                        continue
+                    
+                    # 下载报告PDF
                     filename = f"{stock_code}_{report_year}_annual_report.pdf"
                     save_path = os.path.join(save_dir, str(report_year), filename)
                     
-                    # Check if file already exists
+                    # 检查文件是否已存在
                     if os.path.exists(save_path):
-                        logger.info(f"Report already exists: {save_path}")
+                        logger.info(f"报告已存在: {save_path}")
                         results.append({
                             'stock_code': stock_code,
                             'stock_name': stock_name,
@@ -209,17 +295,16 @@ def download_annual_reports(stock_list, save_dir, min_year=2018, delay=2):
                         })
                         continue
                     
-                    # Get PDF URL
-                    if 'announcementURL' in report:
-                        pdf_url = report['announcementURL']
-                    elif 'pdf_url' in report:
-                        pdf_url = report['pdf_url']
-                    else:
-                        pdf_url = report['attachmentUrl']
+                    # 获取PDF URL
+                    pdf_url = report[url_column]
+                    if not pdf_url:
+                        logger.warning(f"未找到PDF URL: {report[title_column]}")
+                        continue
                     
-                    # Download the PDF
-                    import requests
+                    # 下载PDF
+                    logger.info(f"开始下载: {stock_code}_{report_year} - {report[title_column]}")
                     download_success = download_with_retry(pdf_url, save_path)
+                    
                     if not download_success:
                         results.append({
                             'stock_code': stock_code,
@@ -227,10 +312,11 @@ def download_annual_reports(stock_list, save_dir, min_year=2018, delay=2):
                             'year': report_year,
                             'file_path': None,
                             'status': 'download_failed',
-                            'error': "Failed after multiple attempts"
+                            'error': "下载失败，多次尝试后仍未成功"
                         })
                         continue
-                    logger.info(f"Downloaded report: {save_path}")
+                    
+                    logger.info(f"下载成功: {save_path}")
                     results.append({
                         'stock_code': stock_code,
                         'stock_name': stock_name,
@@ -239,22 +325,22 @@ def download_annual_reports(stock_list, save_dir, min_year=2018, delay=2):
                         'status': 'downloaded'
                     })
                     
-                    # Add delay between downloads
+                    # 添加下载间隔
                     time.sleep(delay)
                     
                 except Exception as e:
-                    logger.error(f"Failed to download report for {stock_code} - {report_year}: {e}")
+                    logger.error(f"下载{stock_code}_{report_year}年报时出错: {e}")
                     results.append({
                         'stock_code': stock_code,
                         'stock_name': stock_name,
-                        'year': report_year,
+                        'year': report_year if report_year else 'unknown',
                         'file_path': None,
                         'status': 'error',
                         'error': str(e)
                     })
         
         except Exception as e:
-            logger.error(f"Error processing stock {stock_code}: {e}")
+            logger.error(f"处理股票{stock_code}时出错: {e}")
             results.append({
                 'stock_code': stock_code,
                 'stock_name': stock_name,
@@ -264,14 +350,21 @@ def download_annual_reports(stock_list, save_dir, min_year=2018, delay=2):
                 'error': str(e)
             })
     
-    # Convert results to DataFrame
+    # 将结果转换为DataFrame
     results_df = pd.DataFrame(results)
     
-    # Save results to CSV
+    # 保存结果到CSV
     results_path = os.path.join(save_dir, 'download_results.csv')
     results_df.to_csv(results_path, index=False, encoding='utf-8-sig')
     
-    logger.info(f"Download complete. Results saved to {results_path}")
+    # 打印下载统计
+    if not results_df.empty:
+        success_count = len(results_df[results_df['status'].isin(['downloaded', 'existing'])])
+        failed_count = len(results_df) - success_count
+        logger.info(f"下载完成。成功: {success_count}，失败: {failed_count}。结果保存至 {results_path}")
+    else:
+        logger.warning("未下载任何文件")
+    
     return results_df
 
 def main():
