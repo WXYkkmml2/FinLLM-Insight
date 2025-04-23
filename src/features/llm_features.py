@@ -299,66 +299,79 @@ def extract_category_from_response(response, categories):
     
     return max_category[0]
 
-def query_llm(client, embedding_func, company_code, year, question, llm_model, max_tokens_per_call=12000):
-    """
-    Query LLM with company report data with caching and optimized text selection
-    
-    Args:
-        client (chromadb.Client): ChromaDB client
-        embedding_func: Embedding function
-        company_code (str): Company code
-        year (str): Report year
-        question (str): Question for LLM
-        llm_model (str): LLM model name
-        max_tokens_per_call (int): Maximum tokens per LLM call
-        
-    Returns:
-        str: LLM response
-    """
+def query_llm_batch(client, embedding_func, company_code, year, questions, llm_model, max_tokens_per_call=12000):
+    """批量查询LLM针对公司报告数据的问题"""
     try:
-        # Get company collection
+        # 获取公司集合
         collection_name = f"company_{company_code}"
         collection = client.get_collection(name=collection_name, embedding_function=embedding_func)
         
-        # Query for relevant chunks
+        # 合并所有问题
+        combined_question = "请分析公司以下几个方面: "
+        for key, question_data in questions.items():
+            combined_question += f"\n\n{key.upper()}: {question_data['question']}"
+        
+        # 查询相关内容
         results = collection.query(
-            query_texts=[question],
-            where={"year": year},
+            query_texts=[combined_question],
+            where={"year": year} if year else None,
             n_results=10
         )
         
-        if not results or not results['documents'] or len(results['documents'][0]) == 0:
-            logger.warning(f"No documents found for {company_code} {year}")
-            return f"No report data found for company {company_code} year {year}."
+        if not results or not results.get('documents') or len(results['documents'][0]) == 0:
+            logger.warning(f"未找到{company_code} {year}年的报告数据")
+            return {key: f"未找到{company_code} {year}年的报告数据。" for key in questions.keys()}
         
-        # Smart selection of relevant chunks
+        # 定义可能的元数据字段映射
+        metadata_mappings = {
+            "company_code": ["company_code", "公司代码", "股票代码", "代码"],
+            "year": ["year", "报告年份", "年份"],
+            "chunk_index": ["chunk_index", "索引", "index"],
+        }
+        
+        # 处理查询结果
         relevant_chunks = []
         
         for i, doc in enumerate(results['documents'][0]):
-            # Calculate relevance score
-            if 'distances' in results and results['distances'][0]:
-                relevance = 1.0 - min(results['distances'][0][i], 1.0)  # Convert distance to relevance
-            else:
-                relevance = 1.0  # Default relevance
+            # 计算相关度
+            relevance = 1.0
+            if 'distances' in results and results.get('distances')[0]:
+                relevance = 1.0 - min(results['distances'][0][i], 1.0)
             
-            # Check if document contains important keywords from the question
-            keywords = [w for w in question.lower().split() if len(w) > 3]
-            contains_keywords = any(keyword in doc.lower() for keyword in keywords)
+            # 获取元数据
+            metadata = {}
+            if results.get('metadatas') and results['metadatas'][0]:
+                metadata = results['metadatas'][0][i]
             
-            # Only include high-relevance chunks or those containing keywords
-            if relevance > 0.7 or contains_keywords:
-                metadata = results['metadatas'][0][i] if results['metadatas'] and results['metadatas'][0] else {}
+            # 构建标准化的块信息
+            chunk_info = {
+                "content": doc,
+                "relevance": relevance,
+            }
+            
+            # 处理元数据字段，确保使用标准化的键名
+            for standard_key, possible_keys in metadata_mappings.items():
+                # 从元数据中查找字段值
+                value = None
+                for key in possible_keys:
+                    if key in metadata and metadata[key] is not None:
+                        value = metadata[key]
+                        break
                 
-                chunk_info = {
-                    "content": doc,
-                    "relevance": relevance,
-                    "company_code": metadata.get("company_code", company_code),
-                    "year": metadata.get("year", year),
-                    "chunk_index": metadata.get("chunk_index", i)
-                }
+                # 如果在元数据中找不到，则使用默认值
+                if value is None:
+                    if standard_key == "company_code":
+                        value = company_code
+                    elif standard_key == "year":
+                        value = year
+                    elif standard_key == "chunk_index":
+                        value = i
                 
-                relevant_chunks.append(chunk_info)
+                chunk_info[standard_key] = value
+            
+            relevant_chunks.append(chunk_info)
         
+
         # Sort chunks by relevance
         relevant_chunks = sorted(relevant_chunks, key=lambda x: x["relevance"], reverse=True)
         
