@@ -164,46 +164,70 @@ def calculate_future_returns(price_df, windows=[1, 5, 20, 60, 120]):
 
 def create_report_date_mapping(reports_dir):
     """
-    Create mapping from stock code to report publication dates
+    创建从股票代码到报告发布日期的映射
     
     Args:
-        reports_dir (str): Directory containing reports
+        reports_dir (str): 包含报告的目录
         
     Returns:
-        dict: Mapping from stock code to report dates
+        dict: 从股票代码到报告日期的映射
     """
     mapping = {}
     
-    # Check if download results file exists
+    # 检查下载结果文件是否存在
     results_path = os.path.join(reports_dir, 'download_results.csv')
     if os.path.exists(results_path):
         try:
             results_df = pd.read_csv(results_path, encoding='utf-8-sig')
             
-            # Group by stock code and year
-            for _, row in results_df.iterrows():
-                if 'stock_code' in row and 'year' in row and pd.notna(row['year']):
-                    stock_code = row['stock_code']
-                    year = int(row['year'])
-                    
-                    # Assume report date is the file creation date if no specific date is available
-                    # This is a simplification; in production, you should extract the actual report date
-                    if 'file_path' in row and pd.notna(row['file_path']) and os.path.exists(row['file_path']):
-                        # Use file modification time as a proxy for report date
-                        file_date = datetime.fromtimestamp(os.path.getmtime(row['file_path']))
+            # 打印列名，便于调试
+            logger.debug(f"下载结果文件列名: {results_df.columns.tolist()}")
+            
+            # 定义可能的列名
+            stock_code_cols = ['stock_code', 'company_code', '股票代码', '公司代码', '代码']
+            year_cols = ['year', 'report_year', '年份', '报告年份']
+            
+            # 确定实际使用的列名
+            stock_code_col = None
+            for col in stock_code_cols:
+                if col in results_df.columns:
+                    stock_code_col = col
+                    break
+            
+            year_col = None
+            for col in year_cols:
+                if col in results_df.columns:
+                    year_col = col
+                    break
+            
+            if not stock_code_col or not year_col:
+                logger.warning(f"结果文件中找不到股票代码或年份列，可用列: {results_df.columns.tolist()}")
+            else:
+                # 按股票代码和年份分组
+                for _, row in results_df.iterrows():
+                    if pd.notna(row[stock_code_col]) and pd.notna(row[year_col]):
+                        stock_code = row[stock_code_col]
+                        try:
+                            year = int(row[year_col])
+                        except:
+                            year = row[year_col]  # 如果转换失败，直接使用原值
                         
-                        # Structure: {stock_code: {year: date}}
-                        if stock_code not in mapping:
-                            mapping[stock_code] = {}
-                        
-                        mapping[stock_code][year] = file_date.strftime('%Y%m%d')
+                        # 提取报告日期
+                        if 'file_path' in row and pd.notna(row['file_path']) and os.path.exists(row['file_path']):
+                            file_date = datetime.fromtimestamp(os.path.getmtime(row['file_path']))
+                            
+                            # 结构: {stock_code: {year: date}}
+                            if stock_code not in mapping:
+                                mapping[stock_code] = {}
+                            
+                            mapping[stock_code][year] = file_date.strftime('%Y%m%d')
             
             return mapping
-        
+            
         except Exception as e:
-            logger.error(f"Failed to load report dates from results file: {e}")
+            logger.error(f"从结果文件加载报告日期时出错: {e}")
     
-    # If no results file or error, walk through directories
+    # 如果没有结果文件或出错，遍历目录
     try:
         for year in os.listdir(reports_dir):
             year_dir = os.path.join(reports_dir, year)
@@ -212,12 +236,12 @@ def create_report_date_mapping(reports_dir):
                 
                 for file in os.listdir(year_dir):
                     if file.endswith('.pdf') or file.endswith('.txt'):
-                        # Extract stock code from filename (assuming format: stock_code_year_*.pdf/txt)
+                        # 从文件名提取股票代码（假设格式：stock_code_year_*.pdf/txt）
                         parts = file.split('_')
                         if len(parts) >= 2 and len(parts[0]) == 6 and parts[0].isdigit():
                             stock_code = parts[0]
                             
-                            # Use file modification date
+                            # 使用文件修改日期
                             file_path = os.path.join(year_dir, file)
                             file_date = datetime.fromtimestamp(os.path.getmtime(file_path))
                             
@@ -229,9 +253,8 @@ def create_report_date_mapping(reports_dir):
         return mapping
     
     except Exception as e:
-        logger.error(f"Failed to create report date mapping: {e}")
+        logger.error(f"创建报告日期映射时出错: {e}")
         return {}
-
 def generate_targets(reports_dir, output_dir, price_start_date=None, price_end_date=None):
     """
     Generate target variables for all stocks with reports
