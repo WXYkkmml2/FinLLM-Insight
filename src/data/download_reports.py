@@ -160,11 +160,11 @@ def download_annual_reports(stock_list, save_dir, min_year=2018, delay=2):
                 logger.warning(f"No reports found for {stock_code} - {stock_name}")
                 continue
                 
-            # Filter annual reports only
+
+            # 修改,筛选不是title，是公告标题！
             annual_reports = df_announcements[
-                df_announcements['title'].str.contains('年度报告|年报', case=False, na=False)
-            ]
-            
+                df_announcements['公告标题'].str.contains('年度报告|年报', case=False, na=False)
+            ]            
             if len(annual_reports) == 0:
                 logger.warning(f"No annual reports found for {stock_code} - {stock_name}")
                 continue
