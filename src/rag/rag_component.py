@@ -314,56 +314,52 @@ class FinancialReportRAG:
         Returns:
             dict: Query results
         """
+
         try:
-            # Validate inputs
-            if company_code and company_code not in self.companies:
-                return {
-                    "answer": f"Company code {company_code} not found in the system. Available company codes: {', '.join(self.get_available_companies()[:10])}...",
-                    "sources": []
-                }
+            # 定义元数据字段映射
+            metadata_mappings = {
+                "company_code": ["company_code", "公司代码", "股票代码", "代码"],
+                "year": ["year", "报告年份", "年份"],
+                "chunk_index": ["chunk_index", "索引", "index"],
+                "source_file": ["source_file", "文件路径", "file_path", "path"]
+            }
             
-            if company_code and year and year not in self.get_company_years(company_code):
-                available_years = self.get_company_years(company_code)
-                return {
-                    "answer": f"Annual report for company {company_code} for year {year} not found in the system. Available years: {', '.join(available_years)}",
-                    "sources": []
-                }
-            
-            # Prepare for query
-            relevant_chunks = []
-            
-            # If company_code is specified, query only that collection
-            if company_code:
-                collection_name = f"company_{company_code}"
-                try:
-                    collection = self.db_client.get_collection(name=collection_name, embedding_function=self.embedding_func)
+            # 处理查询结果
+            if results and results['documents'] and results['documents'][0]:
+                for i, doc in enumerate(results['documents'][0]):
+                    raw_metadata = {}
+                    if results['metadatas'] and results['metadatas'][0]:
+                        raw_metadata = results['metadatas'][0][i]
                     
-                    # Query constraints
-                    where_clause = None
-                    if year:
-                        where_clause = {"year": year}
+                    # 构建块信息
+                    chunk_info = {"content": doc}
                     
-                    # Query collection
-                    results = collection.query(
-                        query_texts=[question],
-                        where=where_clause,
-                        n_results=max_results
-                    )
+                    # 处理元数据字段
+                    for standard_key, possible_keys in metadata_mappings.items():
+                        # 从元数据中查找值
+                        value = None
+                        for key in possible_keys:
+                            if key in raw_metadata and raw_metadata[key] is not None:
+                                value = raw_metadata[key]
+                                break
+                        
+                        # 设置默认值
+                        if value is None:
+                            if standard_key == "company_code" and company_code:
+                                value = company_code
+                            elif standard_key == "year" and year:
+                                value = year
+                            elif standard_key == "year":
+                                value = "unknown"
+                            elif standard_key == "chunk_index":
+                                value = i
+                            elif standard_key == "source_file":
+                                value = "unknown"
+                        
+                        chunk_info[standard_key] = value
                     
-                    if results and results['documents'] and results['documents'][0]:
-                        for i, doc in enumerate(results['documents'][0]):
-                            metadata = results['metadatas'][0][i] if results['metadatas'] and results['metadatas'][0] else {}
-                            
-                            chunk_info = {
-                                "content": doc,
-                                "company_code": metadata.get("company_code", company_code),
-                                "year": metadata.get("year", year if year else "unknown"),
-                                "chunk_index": metadata.get("chunk_index", i),
-                                "source_file": metadata.get("source_file", "unknown")
-                            }
-                            
-                            relevant_chunks.append(chunk_info)
-                
+                    relevant_chunks.append(chunk_info)
+              
                 except Exception as e:
                     logger.error(f"Error querying collection {collection_name}: {e}")
 
