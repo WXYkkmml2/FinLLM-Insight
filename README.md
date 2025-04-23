@@ -303,10 +303,6 @@ FinLLM-Insight/
 2. 确认巨潮资讯网API的可用性
 3. 尝试增加 `download_delay` 参数的值以减少请求频率
 
-## 贡献指南
-
-欢迎贡献代码、报告问题或提出改进建议！请参阅 [CONTRIBUTING.md](CONTRIBUTING.md) 了解详情。
-
 ## 鸣谢
 
 - 本项目受到 [GPT-InvestAR](https://github.com/UditGupta10/GPT-InvestAR) 的启发
