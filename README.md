@@ -140,35 +140,35 @@ FinLLM-Insight 采用模块化设计，由以下主要部分组成：
 
 ### 1. 自动化数据获取
 
-- 支持沪深300指数成分股
-- 自动下载最新和历史年报
-- 支持增量更新数据
+支持沪深300指数成分股
+自动下载最新和历史年报
+支持增量更新数据
 
 ### 2. 智能财报分析
 
-- 利用大语言模型深度分析财报内容
-- 提供多维度企业分析（财务健康、商业模式、增长前景等）
-- 生成结构化评分和投资建议
+利用大语言模型深度分析财报内容
+提供多维度企业分析（财务健康、商业模式、增长前景等）
+生成结构化评分和投资建议
 
 ### 3. 收益率预测
 
-- 基于LLM特征训练机器学习模型
-- 支持不同时间窗口的收益预测
-- 提供预测可视化和解释
+基于LLM特征训练机器学习模型
+支持不同时间窗口的收益预测
+提供预测可视化和解释
 
 ### 4. 交互式年报查询
 
-- 基于RAG技术的自然语言查询
-- 快速定位关键信息
-- 提供信息来源的溯源
+基于RAG技术的自然语言查询
+快速定位关键信息
+提供信息来源的溯源
 
 ## 快速开始
 
 ### 系统要求
 
-- Python 3.8+
-- 8GB+ RAM
-- 互联网连接
+Python 3.8+
+8GB+ RAM
+互联网连接
 
 ### 安装
 
@@ -251,13 +251,13 @@ python src/rag/rag_component.py --interactive
 
 ## 技术实现
 
-- **数据源**：AKShare API连接巨潮资讯网
-- **文本处理**：PyPDF2, pdfplumber, HanziConv
-- **向量数据库**：ChromaDB
-- **嵌入模型**：BAAI/bge-large-zh-v1.5
-- **大语言模型**：GPT-3.5-Turbo
-- **机器学习**：scikit-learn, RandomForest, XGBoost
-- **可视化**：Matplotlib, Seaborn
+**数据源**：AKShare API连接巨潮资讯网
+**文本处理**：PyPDF2, pdfplumber, HanziConv
+**向量数据库**：ChromaDB
+**嵌入模型**：BAAI/bge-large-zh-v1.5
+**大语言模型**：GPT-3.5-Turbo
+**机器学习**：scikit-learn, RandomForest, XGBoost
+**可视化**：Matplotlib, Seaborn
 
 ## 项目结构
 
@@ -305,9 +305,9 @@ FinLLM-Insight/
 
 ## 鸣谢
 
-- 本项目受到 [GPT-InvestAR](https://github.com/UditGupta10/GPT-InvestAR) 的启发
-- 感谢CSC6052/5051/4100/DDA6307/MDS5110 NLP课程的支持
-- 使用了 [AKShare](https://github.com/akfamily/akshare) 提供的财经数据接口
+本项目受到 [GPT-InvestAR](https://github.com/UditGupta10/GPT-InvestAR) 的启发
+感谢CSC6052/5051/4100/DDA6307/MDS5110 NLP课程的支持
+使用了 [AKShare](https://github.com/akfamily/akshare) 提供的财经数据接口
 
 ## 许可证
 
