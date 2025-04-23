@@ -60,59 +60,87 @@ def load_config(config_path):
     except Exception as e:
         logger.error(f"Failed to load config: {e}")
         raise
-
 def load_data(features_path, targets_path):
-    """
-    Load and merge features and targets
-    
-    Args:
-        features_path (str): Path to LLM features CSV
-        targets_path (str): Path to targets CSV
-        
-    Returns:
-        pd.DataFrame: Merged dataset
-    """
+    """加载并合并特征和目标数据"""
     try:
-        # Load features
+        # 加载特征
         features_df = pd.read_csv(features_path, encoding='utf-8-sig')
-        logger.info(f"Loaded features: {features_df.shape[0]} rows, {features_df.shape[1]} columns")
+        logger.info(f"加载特征: {features_df.shape[0]}行, {features_df.shape[1]}列")
         
-        # Load targets
+        # 加载目标
         targets_df = pd.read_csv(targets_path, encoding='utf-8-sig')
-        logger.info(f"Loaded targets: {targets_df.shape[0]} rows, {targets_df.shape[1]} columns")
+        logger.info(f"加载目标: {targets_df.shape[0]}行, {targets_df.shape[1]}列")
         
-        # Merge on company code and report year
+        # 打印列名，便于调试
+        logger.debug(f"特征数据列名: {features_df.columns.tolist()}")
+        logger.debug(f"目标数据列名: {targets_df.columns.tolist()}")
+        
+        # 确定公司代码列名
+        company_code_cols = ['company_code', 'stock_code', '公司代码', '股票代码', '代码']
+        report_year_cols = ['report_year', 'year', '报告年份', '年份']
+        
+        # 在特征数据中查找公司代码列
+        feature_company_col = None
+        for col in company_code_cols:
+            if col in features_df.columns:
+                feature_company_col = col
+                break
+        
+        if not feature_company_col:
+            raise ValueError(f"在特征数据中找不到公司代码列: {company_code_cols}")
+        
+        # 在特征数据中查找报告年份列
+        feature_year_col = None
+        for col in report_year_cols:
+            if col in features_df.columns:
+                feature_year_col = col
+                break
+        
+        if not feature_year_col:
+            raise ValueError(f"在特征数据中找不到报告年份列: {report_year_cols}")
+        
+        # 在目标数据中查找公司代码列
+        target_company_col = None
+        for col in company_code_cols:
+            if col in targets_df.columns:
+                target_company_col = col
+                break
+        
+        if not target_company_col:
+            raise ValueError(f"在目标数据中找不到公司代码列: {company_code_cols}")
+        
+        # 在目标数据中查找报告年份列
+        target_year_col = None
+        for col in report_year_cols:
+            if col in targets_df.columns:
+                target_year_col = col
+                break
+        
+        if not target_year_col:
+            raise ValueError(f"在目标数据中找不到报告年份列: {report_year_cols}")
+        
+        # 合并数据
         merged_df = pd.merge(
             features_df,
             targets_df,
             how='inner',
-            left_on=['company_code', 'report_year'],
-            right_on=['stock_code', 'report_year']
+            left_on=[feature_company_col, feature_year_col],
+            right_on=[target_company_col, target_year_col]
         )
         
-        logger.info(f"Merged dataset: {merged_df.shape[0]} rows, {merged_df.shape[1]} columns")
+        logger.info(f"合并后数据: {merged_df.shape[0]}行, {merged_df.shape[1]}列")
         
-        # Check if merge was successful
+        # 检查合并是否成功
         if merged_df.shape[0] == 0:
-            # Try alternative column names
-            logger.warning("First merge attempt failed. Trying alternative column mappings...")
-            merged_df = pd.merge(
-                features_df,
-                targets_df,
-                how='inner',
-                left_on=['company_code', 'report_year'],
-                right_on=['stock_code', 'year']
-            )
-            
-            if merged_df.shape[0] == 0:
-                logger.error("Failed to merge features and targets. Check column names.")
+            logger.error(f"合并后数据为空，请检查公司代码和报告年份列是否匹配")
+            logger.error(f"特征数据示例: {features_df[[feature_company_col, feature_year_col]].head()}")
+            logger.error(f"目标数据示例: {targets_df[[target_company_col, target_year_col]].head()}")
         
         return merged_df
     
     except Exception as e:
-        logger.error(f"Error loading data: {e}")
+        logger.error(f"加载数据错误: {e}")
         raise
-
 def preprocess_data(df, target_column, test_size=0.2, random_state=42):
     """
     Preprocess data for model training
