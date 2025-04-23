@@ -1,4 +1,4 @@
----自己人看的--
+
 # FinLLM-Insight 使用指南
 
 
@@ -18,14 +18,14 @@ pip install -r requirements.txt
 ### 2. 配置 API 密钥（重要！）
 
 项目依赖 OpenAI API 来生成分析结果，所以需要设置 API 密钥：
- **编辑 `.env` 文件，添加你的 API 密钥**：
+ **编辑 `.env` 文件，添加 API 密钥**：
    ```
-   OPENAI_API_KEY=你的OpenAI密钥
+   OPENAI_API_KEY=OpenAI密钥
    ```
    
    **⚠️ 注意：没有配置正确的 API 密钥，程序将无法正常运行！**
 
-如果你需要用到 HuggingFace 的模型，也可以添加：
+如果需要用到 HuggingFace 的模型，也可以添加：
    ```
    HUGGINGFACE_API_KEY=你的HuggingFace密钥
    ```
@@ -41,7 +41,7 @@ pip install -r requirements.txt
 
 ### 完整流水线
 
-如果你想运行完整处理流程：
+如果想运行完整处理流程：
 
 ```bash
 python src/pipeline.py
@@ -86,13 +86,6 @@ python src/rag/rag_component.py --interactive
 2. 确保密钥格式正确（通常以 `sk-` 开头）
 3. 重启程序以重新加载环境变量
 
-### 网络连接问题
-
-在中国大陆地区使用 OpenAI API 可能需要代理。你可以:
-
-1. 设置系统代理
-2. 或使用支持国内访问的替代 API 服务
-
 ### 目录结构问题
 
 如果遇到找不到文件或目录的错误：
@@ -101,9 +94,6 @@ python src/rag/rag_component.py --interactive
 2. 手动创建缺失的目录（如 `data/raw/annual_reports`）
 
 
-
-
----给别人看的---
 # FinLLM-Insight
 
 
@@ -198,7 +188,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-2. 编辑 `.env` 文件，添加你的 API 密钥：
+2. 编辑 `.env` 文件，添加API 密钥：
 ```
 OPENAI_API_KEY=your_openai_api_key_here
 HUGGINGFACE_API_KEY=your_huggingface_api_key_here
