@@ -54,70 +54,74 @@ def load_config(config_path):
         raise
 
 def get_stock_price_history(stock_code, start_date, end_date):
-    """
-    Get historical stock price data for a given stock
-    
-    Args:
-        stock_code (str): Stock code (6 digits)
-        start_date (str): Start date in format 'YYYYMMDD'
-        end_date (str): End date in format 'YYYYMMDD'
-        
-    Returns:
-        pd.DataFrame: DataFrame with stock price history
-    """
+    """获取股票历史价格数据"""
     try:
-        # Determine market based on stock code prefix
-        # 6xxxxx: Shanghai, 0xxxxx or 3xxxxx: Shenzhen
+        # 确定市场代码
         if stock_code.startswith('6'):
             market = 'sh'
         else:
             market = 'sz'
         
-        # Fetch stock price history using AKShare
-        # Format stock_code to meet AKShare's requirements (e.g., sh600000 or sz000001)
+        # 格式化股票代码
         symbol = f"{market}{stock_code}"
         
-        # AKShare's stock_zh_a_hist function gets A-share historical data
+        # 获取股票历史价格数据
         df = ak.stock_zh_a_hist(
             symbol=symbol,
             period="daily",
             start_date=start_date,
             end_date=end_date,
-            adjust="qfq"  # Use qfq (front-adjusted) price
+            adjust="qfq"  # 前复权价格
         )
         
-        # Rename columns to standard English names
-        column_map = {
-            '日期': 'date',
-            '开盘': 'open',
-            '收盘': 'close',
-            '最高': 'high',
-            '最低': 'low',
-            '成交量': 'volume',
-            '成交额': 'amount',
-            '振幅': 'amplitude',
-            '涨跌幅': 'pct_change',
-            '涨跌额': 'change',
-            '换手率': 'turnover'
+        # 打印原始列名，便于调试
+        logger.debug(f"原始数据列名: {df.columns.tolist()}")
+        
+        # 定义可能的列名映射（更全面）
+        column_mappings = {
+            'date': ['日期', '交易日期', 'date', 'trade_date'],
+            'open': ['开盘', '开盘价', 'open', 'open_price'],
+            'close': ['收盘', '收盘价', 'close', 'close_price'],
+            'high': ['最高', '最高价', 'high', 'high_price'],
+            'low': ['最低', '最低价', 'low', 'low_price'],
+            'volume': ['成交量', '成交股数', 'volume', 'vol'],
+            'amount': ['成交额', '成交金额', 'amount'],
+            'pct_change': ['涨跌幅', '变动率', 'pct_chg', 'change_pct'],
+            'change': ['涨跌额', '价格变动', 'price_change'],
+            'turnover': ['换手率', 'turnover']
         }
         
-        # Check if columns exist before renaming
-        existing_columns = {}
-        for cn_col, en_col in column_map.items():
-            if cn_col in df.columns:
-                existing_columns[cn_col] = en_col
+        # 创建重命名映射
+        rename_map = {}
+        for target_col, possible_names in column_mappings.items():
+            for col_name in possible_names:
+                if col_name in df.columns:
+                    rename_map[col_name] = target_col
+                    break
         
-        df = df.rename(columns=existing_columns)
+        # 重命名列
+        if rename_map:
+            df = df.rename(columns=rename_map)
+            logger.info(f"重命名列: {rename_map}")
         
-        # Ensure 'date' is datetime type
-        if 'date' in df.columns:
-            df['date'] = pd.to_datetime(df['date'])
-            df.set_index('date', inplace=True)
+        # 确保日期列是datetime类型
+        date_col = 'date'
+        if date_col in df.columns:
+            df[date_col] = pd.to_datetime(df[date_col])
+            df.set_index(date_col, inplace=True)
+        else:
+            # 如果找不到date列，尝试找其他可能的日期列
+            for col in df.columns:
+                if '日期' in col or 'date' in col.lower():
+                    logger.warning(f"使用替代日期列: {col}")
+                    df[col] = pd.to_datetime(df[col])
+                    df.set_index(col, inplace=True)
+                    break
         
         return df
     
     except Exception as e:
-        logger.error(f"Failed to get stock price history for {stock_code}: {e}")
+        logger.error(f"获取{stock_code}价格历史失败: {e}")
         return None
 
 def calculate_future_returns(price_df, windows=[1, 5, 20, 60, 120]):
