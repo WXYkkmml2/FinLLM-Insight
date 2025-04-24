@@ -1,56 +1,56 @@
 {
     "financial_health": {
-        "question": "Assess the company's financial health based on the content of the annual report. Consider factors such as revenue growth, profit margins, debt level, cash flow, etc. Analyze whether the company's financial situation is stable and whether there are potential risks. Give a score of 1-10 (10 points are the best) and explain the reasons in detail.",
+        "question": "Analyze the company's financial health based on the content of the annual report. Consider factors such as revenue growth, profit margins, debt level, cash flow, and liquidity ratios. Is the company financially stable? Are there any concerning trends? Provide a comprehensive assessment and score from 1-10 (10 being excellent financial health).",
         "type": "numeric",
         "score_range": [1, 10]
     },
     "business_model": {
-        "question": "Based on the content of the annual report, analyze the company's business model and competitive advantages. What is the company's core business? What is its competitive position in the industry? Does the company have a continuous competitive advantage? Give a rating of 1-10 (10 points are the best) and explain the reasons in detail.",
+        "question": "Analyze the company's business model and competitive advantages based on the annual report. What is the company's core business? What are its primary revenue streams? Does it have sustainable competitive advantages or moats? Assess its competitive position in the industry and provide a score from 1-10 (10 being strongest business model).",
         "type": "numeric",
         "score_range": [1, 10]
     },
     "future_growth": {
-        "question": "Based on the content of the annual report, evaluate the company's future growth potential. In which areas does the company invest? What are the market prospects? What are the growth drivers? Give a 1-10 rating (10 points are the best) and explain the reasons in detail.",
+        "question": "Based on the annual report content, evaluate the company's future growth potential. Consider investments in new products/services, R&D spending, market expansion plans, and growth strategy. What are the key growth drivers and opportunities? Score the growth potential from 1-10 (10 being highest growth potential).",
         "type": "numeric",
         "score_range": [1, 10]
     },
     "management_quality": {
-        "question": "Based on the content of the annual report, evaluate the quality of the company's management. Is the strategic decisions of the management reasonable? How is the execution ability? Is there good corporate governance? Give a 1-10 rating (10 points are the best) and explain the reasons in detail.",
+        "question": "Assess the quality of the company's management team based on the annual report. Consider their strategic decisions, execution ability, communication transparency, and corporate governance. Does management have a clear vision? How well are they delivering on previous commitments? Score management quality from 1-10 (10 being excellent).",
         "type": "numeric",
         "score_range": [1, 10]
     },
     "risk_assessment": {
-        "question": "Based on the content of the annual report, evaluate the main risks faced by the company. It includes market risks, operating risks, financial risks, legal and compliance risks, etc. How serious are these risks? Is the company's measures to deal with risks adequate? Give a score of 1-10 (1 point means extremely high risk, 10 points means extremely low risk) and explain the reasons in detail.",
-        "type": "numeric",
+        "question": "Identify and evaluate the main risks faced by the company as disclosed in the annual report. Consider market risks, operational risks, financial risks, regulatory/legal risks, and any company-specific risks. How severe are these risks? How effectively is the company managing them? Provide a risk rating from 1-10 (1 being extremely high risk, 10 being very low risk).",
+        "type": "numeric", 
         "score_range": [1, 10]
     },
     "industry_outlook": {
-        "question": "Based on the content of the annual report, analyze the prospects of the company's industry. What are the development trends of the industry? What are the opportunities and challenges? How is the company's positioning in the industry? Give a rating of 1-10 (10 points are the best) and explain the reasons in detail.",
+        "question": "Based on information in the annual report, analyze the outlook for the company's industry. What industry trends are mentioned? What competitive dynamics are at play? Are there structural changes occurring? How well-positioned is the company within its industry? Score the industry outlook from 1-10 (10 being most favorable).",
         "type": "numeric",
         "score_range": [1, 10]
     },
     "esg_performance": {
-        "question": "Based on the content of the annual report, evaluate the company's performance in environmental, social and governance (ESG). Does the company have a sustainable development strategy? How does social responsibility perform? Is the corporate governance structure sound? Give a 1-10 rating (10 points are the best) and explain the reasons in detail.",
+        "question": "Evaluate the company's Environmental, Social and Governance (ESG) performance based on the annual report. Consider environmental initiatives, social responsibility programs, board diversity, and corporate governance structures. Does the company have meaningful sustainability targets? Score the ESG performance from 1-10 (10 being excellent).",
         "type": "numeric",
         "score_range": [1, 10]
     },
     "innovation_capability": {
-        "question": "Based on the content of the annual report, evaluate the company's innovation capabilities. How is the company's investment in R&D? What are its innovative achievements? What impact does innovation have on the company's business? Give a 1-10 score (10 points are the best) and explain the reasons in detail.",
+        "question": "Assess the company's innovation capabilities based on the annual report. Consider R&D investments, patents, new product/service introductions, and technology adoption. Is innovation a strategic priority? What innovative achievements are highlighted? Score the innovation capability from 1-10 (10 being excellent).",
         "type": "numeric",
         "score_range": [1, 10]
     },
     "investment_recommendation": {
-        "question": "Based on the content of the annual report and the above analysis, investment advice on the company's stock is given. Consider the company's fundamentals, valuation level, growth prospects and risk factors. Is your suggestion strongly buying, buying, holding, selling or selling? Please explain the reasons in detail.",
+        "question": "Based on your analysis of this annual report, what investment recommendation would you make for this company's stock? Consider the company's fundamentals, valuation indicators mentioned, growth prospects, and risk factors. Would you suggest Strong Sell, Sell, Hold, Buy, or Strong Buy? Explain your rationale.",
         "type": "categorical",
-        "categories": ["Sell strongly", "Sell", "Hold", "Buy strongly"]
+        "categories": ["Strong Sell", "Sell", "Hold", "Buy", "Strong Buy"]
     },
     "market_competition": {
-        "question": "Based on the content of the annual report, analyze the company's competitive trend in the market. What are the main competitors? What are the advantages and disadvantages of the company compared with its competitors? How does the market share change? Give a 1-10 score (10 points represent a strong competitive advantage) and explain the reasons in detail.",
+        "question": "Analyze the competitive landscape described in the annual report. Who are the main competitors? What are the company's competitive advantages and disadvantages? How is market share trending? Is the company gaining or losing competitive ground? Score the company's competitive position from 1-10 (10 representing dominant market position).",
         "type": "numeric",
         "score_range": [1, 10]
     },
     "financial_transparency": {
-        "question": "Based on the content of the annual report, evaluate the transparency and quality of the company's financial information. What is the integrity and clarity of the financial statements? Are there any inadequate or ambiguity of information disclosure? Is there any risk of financial fraud in the company? Give a 1-10 score (10 points represent extremely high transparency) and explain the reasons in detail.",
+        "question": "Evaluate the transparency and quality of the company's financial reporting based on the annual report. Consider the clarity and completeness of disclosures, consistency in accounting methods, and any noteworthy items from the auditor's report. Are there any red flags in how information is presented? Score the financial transparency from 1-10 (10 being highest transparency).",
         "type": "numeric",
         "score_range": [1, 10]
     }
