@@ -103,7 +103,9 @@ def get_stock_price_history(ticker, start_date, end_date):
         
 
         # Convert column names to strings and use lowercase for consistency
-        df.columns = [str(col).lower() for col in df.columns]
+
+        if 'adj close' in df.columns:
+            df.rename(columns={'adj close': 'adj_close'}, inplace=True)        
         # Rename 'adj close' to 'adj_close' for easier access
         if 'adj close' in df.columns:
             df.rename(columns={'adj close': 'adj_close'}, inplace=True)
@@ -115,40 +117,69 @@ def get_stock_price_history(ticker, start_date, end_date):
         logger.error(f"Error getting price history for {ticker}: {e}")
         return None
 def calculate_future_returns(price_df, windows=[1, 5, 20, 60, 120]):
-    """
-    Calculate future returns for different time windows
-    
-    Args:
-        price_df (pd.DataFrame): DataFrame with price history
-        windows (list): List of time windows (in trading days)
-        
-    Returns:
-        pd.DataFrame: DataFrame with future returns
-    """
+    """计算不同时间窗口的未来收益率"""
     if price_df is None or len(price_df) == 0:
         return None
     
-    # Make a copy to avoid modifying the original
+    # 创建副本以避免修改原始数据
     df = price_df.copy()
     
-    # Calculate future returns for each window
+    # 检查列名并标准化 - 确保 df.columns 是字符串列表，而不是元组
+    columns_list = list(df.columns)  # 转换为列表以确保可以处理
+    
+    # 查找合适的价格列
+    price_col = None
+    if 'close' in columns_list:
+        price_col = 'close'
+    elif 'Close' in columns_list:
+        price_col = 'Close'
+        df.columns = [str(col).lower() for col in columns_list]  # 确保每个列名都是字符串
+        price_col = 'close'  # 直接使用小写名称
+    else:
+        # 尝试其他可能的价格列名
+        for col_name in ['adj_close', 'adj close', 'Adj Close', 'adjusted_close', 'price']:
+            if col_name in columns_list:
+                price_col = col_name
+                break
+    
+    # 如果仍然找不到价格列，则记录错误并使用第一个数值列
+    if price_col is None:
+        print(f"警告: 找不到价格列。可用列: {columns_list}")
+        # 尝试使用第一个数值列
+        for col in columns_list:
+            if pd.api.types.is_numeric_dtype(df[col]):
+                price_col = col
+                print(f"使用 {col} 作为价格列")
+                break
+    
+    if price_col is None:
+        return None
+    
+    # 计算各窗口的未来收益率
     for window in windows:
-        # Calculate future price
-        future_price = df['close'].shift(-window)
-        
-        # Calculate future return (%)
-        df[f'future_return_{window}d'] = (future_price - df['close']) / df['close'] * 100
-        
-        # Create binary target (1 if return is positive, 0 otherwise)
-        df[f'future_up_{window}d'] = (df[f'future_return_{window}d'] > 0).astype(int)
-        
-        # Create categorical target based on return quartiles
-        # Bins: bottom 25%, 25-50%, 50-75%, top 25%
-        df[f'future_category_{window}d'] = pd.qcut(
-            df[f'future_return_{window}d'],
-            q=4,
-            labels=['poor', 'below_avg', 'above_avg', 'excellent']
-        )
+        try:
+            # 计算未来价格
+            future_price = df[price_col].shift(-window)
+            
+            # 计算未来收益率(%)
+            df[f'future_return_{window}d'] = (future_price - df[price_col]) / df[price_col] * 100
+            
+            # 创建二值目标
+            df[f'future_up_{window}d'] = (df[f'future_return_{window}d'] > 0).astype(int)
+            
+            # 创建分类目标
+            try:
+                df[f'future_category_{window}d'] = pd.qcut(
+                    df[f'future_return_{window}d'],
+                    q=4,
+                    labels=['poor', 'below_avg', 'above_avg', 'excellent']
+                )
+            except Exception as e:
+                print(f"无法创建分类目标: {e}")
+                # 创建简单的二分类替代
+                df[f'future_category_{window}d'] = df[f'future_up_{window}d'].map({0: 'down', 1: 'up'})
+        except Exception as e:
+            print(f"计算窗口 {window} 的未来收益时出错: {e}")
     
     return df
 
@@ -175,6 +206,7 @@ def create_report_date_mapping(reports_dir):
             
             # 定义可能的列名
 
+            # 定义可能的列名
             stock_code_cols = ['ticker', 'stock_code', 'company_code']
             year_cols = ['year', 'report_year']
             # 确定实际使用的列名
@@ -284,10 +316,9 @@ def generate_targets(reports_dir, output_dir, price_start_date=None, price_end_d
         try:
             # Get price history for this stock
             price_history = get_stock_price_history(
-
+                
                 ticker=stock_code,
                 start_date=price_start_date,
-                
                 end_date=price_end_date
             )
             
