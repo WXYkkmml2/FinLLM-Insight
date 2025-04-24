@@ -350,7 +350,41 @@ def main():
 
         # >>> 插入的代码块结束 <<<
 
+        # >>> 在设置 os.environ['HTTP_PROXY']/['HTTPS_PROXY'] 代码块之后插入以下测试代码 <<<
+        
+        logger.info("--- Testing Proxy Setting ---")
+        try:
+            # 使用一个会显示你的出口 IP 的服务，例如 httpbin.org
+            test_url = 'https://httpbin.org/ip' 
+            logger.info(f"Attempting to fetch external IP via: {test_url}")
+        
+            # 注意：这里不需要手动指定 proxies=...，因为 requests 会自动读取 os.environ
+            test_response = requests.get(test_url, timeout=10) 
+        
+            if test_response.status_code == 200:
+                external_ip_info = test_response.json()
+                external_ip = external_ip_info.get('origin', 'N/A')
+                logger.info(f"Request originated from IP: {external_ip}")
+                logger.info("--- Proxy Test Complete ---")
+        
+                # 你可以通过这个 IP 地址，对比一下你的 Colab 默认 IP 
+                # (可以在不设置代理的情况下运行 requests.get('https://httpbin.org/ip') 查看)
+                # 如果这里的 IP 与 Colab 默认 IP 不同，说明代理很可能生效了。
+        
+            else:
+                logger.error(f"Proxy test failed. Status code: {test_response.status_code}")
+                logger.error(f"Proxy test response: {test_response.text}")
+                logger.info("--- Proxy Test Complete (Failed) ---")
+        
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error during proxy test request: {e}")
+            logger.info("--- Proxy Test Complete (Error) ---")
+        
+        # >>> 插入的测试代码结束 <<<
+        
+        # ... (后续调用 download_annual_reports 的代码)
 
+        
         # Get stock list
         logger.info("Getting stock list")
         # ... (获取股票列表的代码不变)
