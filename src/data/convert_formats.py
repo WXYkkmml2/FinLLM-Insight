@@ -398,7 +398,7 @@ def main():
 
         # Set parameters
         save_dir = config.get('annual_reports_html_save_directory', './data/raw/annual_reports')
-        min_year = config.get('min_year', 2018)
+        min_year = config.get('min_year', 2020)
         max_year = config.get('max_year', None)
         delay = config.get('download_delay', 2) # 这个 delay 依然控制处理不同报告之间的间隔
 
