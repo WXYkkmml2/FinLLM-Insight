@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
-Data Acquisition Module for FinLLM-Insight
-This module downloads annual reports of Chinese listed companies using AKShare.
+数据获取模块：下载中国或美国上市公司年度报告
+支持多市场数据获取，中国使用AKShare，美国使用Financial Modeling Prep API
 """
 import os
 import sys
@@ -20,33 +20,18 @@ from datetime import datetime
 from pathlib import Path
 import re
 
-import akshare as ak
 import pandas as pd
 from tqdm import tqdm
 
-def download_with_retry(url, save_path, max_retries=3, initial_delay=2):
-    """Download file with retry mechanism"""
-    for attempt in range(max_retries):
-        try:
-            r = requests.get(url, stream=True, timeout=30)
-            r.raise_for_status()
-            
-            with open(save_path, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-            return True
-        
-        except (requests.exceptions.RequestException, IOError) as e:
-            wait_time = initial_delay * (2 ** attempt)
-            logger.warning(f"Attempt {attempt+1}/{max_retries} failed: {e}. Retrying in {wait_time}s...")
-            time.sleep(wait_time)
-    
-    logger.error(f"Failed to download after {max_retries} attempts: {url}")
-    return False
+# 尝试导入AKShare (用于中国市场)
+try:
+    import akshare as ak
+    AKSHARE_AVAILABLE = True
+except ImportError:
+    AKSHARE_AVAILABLE = False
+    print("Warning: AKShare not available. China market data will be limited.")
 
-
-# Configure logging
+# 配置日志
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -58,670 +43,595 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def load_config(config_path):
-    """
-    Load configuration from JSON file
-    
-    Args:
-        config_path (str): Path to config JSON file
-        
-    Returns:
-        dict: Configuration parameters
-    """
+    """加载配置文件"""
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
         return config
     except Exception as e:
-        logger.error(f"Failed to load config: {e}")
+        logger.error(f"配置文件加载失败: {e}")
         raise
 
+def download_with_retry(url, save_path, headers=None, max_retries=3, initial_delay=2):
+    """下载文件，支持重试机制"""
+    if headers is None:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        }
+    
+    for attempt in range(max_retries):
+        try:
+            r = requests.get(url, headers=headers, stream=True, timeout=30)
+            r.raise_for_status()
+            
+            with open(save_path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            return True
+        
+        except (requests.exceptions.RequestException, IOError) as e:
+            wait_time = initial_delay * (2 ** attempt)
+            logger.warning(f"下载尝试 {attempt+1}/{max_retries} 失败: {e}. {wait_time}秒后重试...")
+            time.sleep(wait_time)
+    
+    logger.error(f"{max_retries}次尝试后下载失败: {url}")
+    return False
 
-def get_stock_list(index_name):
-    """
-    Get stock list from specified index
-    
-    Args:
-        index_name (str): Name of the index (e.g., 'CSI300' for 沪深300指数)
-        
-    Returns:
-        pd.DataFrame: DataFrame containing stock symbols and names
-    """
-    try:
-        logger.info(f"Retrieving stock list for index: {index_name}")
-        
-        if index_name == "CSI300":
-            # 使用当前最新的AKShare API获取沪深300成分股
-            try:
-                # 尝试使用index_stock_cons函数
-                stock_list = ak.index_stock_cons(symbol="000300")
-                # 找到包含代码和名称的列
-                code_columns = [col for col in stock_list.columns if '代码' in col or 'code' in col.lower()]
-                name_columns = [col for col in stock_list.columns if '名称' in col or 'name' in col.lower()]
-                
-                if code_columns and name_columns:
-                    stock_list = stock_list[[code_columns[0], name_columns[0]]]
-                    stock_list.columns = ['code', 'name']
-                else:
-                    raise ValueError("无法在返回结果中找到代码和名称列")
-            except Exception as e:
-                logger.warning(f"无法使用index_stock_cons获取沪深300成分股: {e}")
-                try:
-                    # 尝试使用stock_index_cons函数
-                    stock_list = ak.stock_index_cons(symbol="000300")
-                    # 找到包含代码和名称的列
-                    code_columns = [col for col in stock_list.columns if '代码' in col or 'code' in col.lower()]
-                    name_columns = [col for col in stock_list.columns if '名称' in col or 'name' in col.lower()]
-                    
-                    if code_columns and name_columns:
-                        stock_list = stock_list[[code_columns[0], name_columns[0]]]
-                        stock_list.columns = ['code', 'name']
-                    else:
-                        raise ValueError("无法在返回结果中找到代码和名称列")
-                except Exception as e:
-                    logger.warning(f"无法使用stock_index_cons获取沪深300成分股: {e}")
-                    # 使用stock_info_a_code_name获取所有A股，限制300只
-                    logger.info("使用股票信息API获取股票列表")
-                    stock_list = ak.stock_info_a_code_name()
-                    stock_list.columns = ['code', 'name']
-                    stock_list = stock_list.head(300)
-                    logger.info(f"限制为前300只股票从A股列表")
-            
-            # 确保代码格式正确（6位数字）
-            stock_list['code'] = stock_list['code'].astype(str).str.zfill(6)
-            
-        else:
-            # 默认获取所有A股股票
-            stock_list = ak.stock_info_a_code_name()
-            stock_list.columns = ['code', 'name']
-            # 如果使用默认，仍然限制为前50家公司
-            stock_list = stock_list.head(50)
-            logger.info(f"限制为前50家公司从A股列表")
-        
-        logger.info(f"获取到 {len(stock_list)} 只股票")
-        return stock_list
-    
-    except Exception as e:
-        logger.error(f"获取股票列表失败: {e}")
-        raise
+#########################################
+# 中国市场相关函数
+#########################################
 
-    """
-    Get stock list from specified index
-    
-    Args:
-        index_name (str): Name of the index (e.g., 'CSI300' for 沪深300指数)
-        
-    Returns:
-        pd.DataFrame: DataFrame containing stock symbols and names
-    """
-    try:
-        logger.info(f"Retrieving stock list for index: {index_name}")
-        
-        # 检查可用的函数
-        available_funcs = []
-        for func_name in dir(ak):
-            if func_name.startswith("stock_") and callable(getattr(ak, func_name)):
-                available_funcs.append(func_name)
-        
-        logger.info(f"找到了 {len(available_funcs)} 个可能相关的函数")
-        
-        # 尝试索引成分股相关函数
-        index_funcs = [f for f in available_funcs if "index" in f and "cons" in f]
-        logger.info(f"可能的指数成分股函数: {index_funcs}")
-        
-        stock_list = None
-        
-        # 尝试所有可能的指数成分股函数
-        for func_name in index_funcs:
-            try:
-                func = getattr(ak, func_name)
-                
-                # 尝试不同的参数组合
-                param_options = ["000300", "399300", "000016", "沪深300", "上证50"]
-                
-                for param in param_options:
-                    try:
-                        if index_name == "CSI300" and "300" in param:
-                            result = func(symbol=param)
-                            logger.info(f"使用 {func_name}(symbol={param}) 获取沪深300成分股成功")
-                            stock_list = result
-                            break
-                        elif index_name == "CSI50" and ("50" in param or "016" in param):
-                            result = func(symbol=param)
-                            logger.info(f"使用 {func_name}(symbol={param}) 获取上证50成分股成功")
-                            stock_list = result
-                            break
-                    except Exception as e:
-                        continue
-                
-                if stock_list is not None:
-                    break
-                    
-            except Exception as e:
-                continue
-        
-        # 如果指数成分股获取失败，尝试使用所有股票列表
-        if stock_list is None:
-            stock_info_funcs = [f for f in available_funcs if "info" in f and "code" in f]
-            logger.info(f"尝试获取A股列表的可能函数: {stock_info_funcs}")
-            
-            for func_name in stock_info_funcs:
-                try:
-                    func = getattr(ak, func_name)
-                    result = func()
-                    if isinstance(result, pd.DataFrame) and len(result) > 0:
-                        logger.info(f"使用 {func_name}() 获取股票列表成功")
-                        stock_list = result
-                        break
-                except Exception as e:
-                    continue
-        
-        # 如果仍然失败，尝试获取实时行情
-        if stock_list is None:
-            spot_funcs = [f for f in available_funcs if "spot" in f or "quotation" in f]
-            logger.info(f"尝试获取A股行情的可能函数: {spot_funcs}")
-            
-            for func_name in spot_funcs:
-                try:
-                    func = getattr(ak, func_name)
-                    result = func()
-                    if isinstance(result, pd.DataFrame) and len(result) > 0:
-                        logger.info(f"使用 {func_name}() 获取股票行情成功")
-                        stock_list = result
-                        break
-                except Exception as e:
-                    continue
-                    
-        # 处理获取到的数据
-        if stock_list is not None and isinstance(stock_list, pd.DataFrame) and len(stock_list) > 0:
-            # 尝试确定代码和名称列
-            code_col = None
-            name_col = None
-            
-            # 查找可能的代码列
-            for col in stock_list.columns:
-                col_str = str(col).lower()
-                if '代码' in col_str or 'code' in col_str or 'symbol' in col_str:
-                    code_col = col
-                    break
-            
-            # 查找可能的名称列
-            for col in stock_list.columns:
-                col_str = str(col).lower()
-                if '名称' in col_str or 'name' in col_str or '简称' in col_str:
-                    name_col = col
-                    break
-            
-            # 如果找不到明确的列名，使用前两列
-            if code_col is None and len(stock_list.columns) > 0:
-                code_col = stock_list.columns[0]
-            
-            if name_col is None and len(stock_list.columns) > 1:
-                name_col = stock_list.columns[1]
-            
-            # 确保有代码和名称列
-            if code_col is not None and name_col is not None:
-                stock_list = stock_list[[code_col, name_col]].copy()
-                stock_list.columns = ['code', 'name']
-                
-                # 确保代码格式正确 (6位数字)
-                stock_list['code'] = stock_list['code'].astype(str)
-                # 移除非数字字符
-                stock_list['code'] = stock_list['code'].str.replace(r'\D', '', regex=True)
-                # 填充前导零
-                stock_list['code'] = stock_list['code'].str.zfill(6)
-                
-                # 限制数量
-                if index_name == "CSI50":
-                    stock_list = stock_list.head(50)
-                    logger.info(f"限制为前50只股票")
-                elif index_name == "CSI300":
-                    stock_list = stock_list.head(300)
-                    logger.info(f"限制为前300只股票")
-            else:
-                logger.error(f"无法确定代码和名称列: {stock_list.columns.tolist()}")
-                stock_list = None
-        
-        if stock_list is None or not isinstance(stock_list, pd.DataFrame) or len(stock_list) == 0:
-            logger.error("无法获取股票列表")
-            # 创建最小数据集，以便流程能继续
-            stock_list = pd.DataFrame({
-                'code': ['000001', '600036'],
-                'name': ['平安银行', '招商银行']
-            })
-        
-        logger.info(f"成功获取到 {len(stock_list)} 只股票")
-        return stock_list
-    
-    except Exception as e:
-        logger.error(f"获取股票列表失败: {e}")
-        # 返回最小数据集，以便流程能继续
+def get_china_stock_list(index_name="CSI300", max_count=300):
+    """获取指定指数的中国股票列表"""
+    if not AKSHARE_AVAILABLE:
+        logger.error("AKShare未安装，无法获取中国股票列表")
         return pd.DataFrame({
             'code': ['000001', '600036'],
             'name': ['平安银行', '招商银行']
         })
-def get_stock_announcements(stock_code, page=1, retry=3):
-    """
-    获取股票公告信息
     
-    Args:
-        stock_code (str): 股票代码
-        page (int): 页码
-        retry (int): 重试次数
-        
-    Returns:
-        pd.DataFrame: 包含公告信息的DataFrame
-    """
-    for attempt in range(retry):
-        try:
-            # 尝试使用stock_notice_report接口，不传market参数
+    logger.info(f"获取指数 {index_name} 的股票列表")
+    
+    try:
+        # 沪深300成分股
+        if index_name == "CSI300":
             try:
-                announcements = ak.stock_notice_report(symbol=stock_code)
-                if isinstance(announcements, pd.DataFrame) and len(announcements) > 0:
-                    # 过滤年度报告
-                    annual_reports = announcements[announcements['title'].str.contains('年度报告|年报', na=False)]
-                    if len(annual_reports) > 0:
-                        logger.info(f"使用stock_notice_report获取{stock_code}的年报公告成功")
-                        return annual_reports
-                    else:
-                        logger.warning(f"使用stock_notice_report获取数据成功，但未找到{stock_code}的年度报告")
+                stock_list = ak.index_stock_cons_csindex(symbol="000300")
+                stock_list = stock_list[['成分券代码', '成分券名称']].copy()
+                stock_list.columns = ['code', 'name']
             except Exception as e:
-                logger.warning(f"使用stock_notice_report获取{stock_code}的年报公告失败: {e}")
+                logger.warning(f"使用index_stock_cons_csindex获取沪深300成分股失败: {e}")
+                try:
+                    stock_list = ak.index_stock_cons(symbol="000300")
+                    # 找到代码和名称列
+                    code_col = [col for col in stock_list.columns if '代码' in col or 'code' in col.lower()][0]
+                    name_col = [col for col in stock_list.columns if '名称' in col or 'name' in col.lower()][0]
+                    stock_list = stock_list[[code_col, name_col]].copy()
+                    stock_list.columns = ['code', 'name']
+                except Exception as e2:
+                    logger.warning(f"使用index_stock_cons获取沪深300成分股失败: {e2}")
+                    # 获取所有A股
+                    stock_list = ak.stock_info_a_code_name()
+                    stock_list.columns = ['code', 'name']
+                    stock_list = stock_list.head(max_count)
+                    logger.info(f"使用所有A股列表，限制为前{max_count}只")
+        elif index_name == "CSI500":
+            # 中证500成分股
+            try:
+                stock_list = ak.index_stock_cons_csindex(symbol="000905")
+                stock_list = stock_list[['成分券代码', '成分券名称']].copy()
+                stock_list.columns = ['code', 'name']
+            except Exception as e:
+                logger.warning(f"获取中证500成分股失败: {e}")
+                # 获取所有A股
+                stock_list = ak.stock_info_a_code_name()
+                stock_list.columns = ['code', 'name']
+                stock_list = stock_list.head(max_count)
+                logger.info(f"使用所有A股列表，限制为前{max_count}只")
+        else:
+            # 获取所有A股
+            stock_list = ak.stock_info_a_code_name()
+            stock_list.columns = ['code', 'name']
+            if max_count > 0:
+                stock_list = stock_list.head(max_count)
             
-            # 尝试使用巨潮资讯网的接口
-            try:
-                announcements = ak.stock_zh_a_disclosure_report_cninfo(symbol=stock_code)
-                if isinstance(announcements, pd.DataFrame) and len(announcements) > 0:
-                    # 直接使用已知的列名
-                    if 'announcementTitle' in announcements.columns:
-                        annual_reports = announcements[announcements['announcementTitle'].str.contains('年度报告|年报', na=False)]
-                        if len(annual_reports) > 0:
-                            logger.info(f"使用stock_zh_a_disclosure_report_cninfo获取{stock_code}的年报公告成功")
-                            return annual_reports
-                    elif 'title' in announcements.columns:
-                        annual_reports = announcements[announcements['title'].str.contains('年度报告|年报', na=False)]
-                        if len(annual_reports) > 0:
-                            logger.info(f"使用stock_zh_a_disclosure_report_cninfo获取{stock_code}的年报公告成功")
-                            return annual_reports
-                    # 查找可能包含标题的列
-                    else:
-                        for col in announcements.columns:
-                            if any(term in str(col).lower() for term in ['标题', 'title', '公告', 'announcement']):
-                                annual_reports = announcements[announcements[col].astype(str).str.contains('年度报告|年报', na=False)]
-                                if len(annual_reports) > 0:
-                                    logger.info(f"使用stock_zh_a_disclosure_report_cninfo获取{stock_code}的年报公告成功")
-                                    return annual_reports
-                        logger.warning(f"在巨潮资讯网接口返回中未找到{stock_code}的年度报告")
-            except Exception as e:
-                logger.warning(f"使用stock_zh_a_disclosure_report_cninfo获取{stock_code}的年报公告失败: {e}")
-                
-            # 尝试使用另一种方式获取公告
-            try:
-                announcements = ak.stock_individual_info_em(symbol=stock_code)
-                if isinstance(announcements, pd.DataFrame) and len(announcements) > 0:
-                    logger.info(f"使用stock_individual_info_em获取{stock_code}的信息成功")
-                    return announcements
-            except Exception as e:
-                logger.warning(f"使用stock_individual_info_em获取{stock_code}的信息失败: {e}")
-                
-            # 尝试简单的方式
-            try:
-                # 最简单的方式：直接创建包含模拟年报信息的DataFrame
-                logger.info(f"使用备选方法创建{stock_code}的模拟年报信息")
-                current_year = datetime.now().year
-                dummy_data = {
-                    'title': [f"{stock_code}_{current_year-1}年年度报告"],
-                    'url': [f"http://placeholder.url/{stock_code}_{current_year-1}_annual_report.pdf"],
-                    'date': [f"{current_year-1}-12-31"]
-                }
-                return pd.DataFrame(dummy_data)
-            except Exception as e:
-                logger.warning(f"创建模拟年报信息失败: {e}")
-                
-            # 等待后重试
-            if attempt < retry - 1:
-                wait_time = 2 ** attempt
-                logger.warning(f"获取{stock_code}的公告尝试{attempt+1}失败，等待{wait_time}秒后重试")
-                time.sleep(wait_time)
-            else:
-                logger.error(f"获取{stock_code}的公告失败，已尝试{retry}次")
-                
-        except Exception as e:
-            if attempt < retry - 1:
-                wait_time = 2 ** attempt
-                logger.warning(f"获取{stock_code}的公告时发生错误: {e}，等待{wait_time}秒后重试")
-                time.sleep(wait_time)
-            else:
-                logger.error(f"获取{stock_code}的公告时发生错误: {e}，已尝试{retry}次")
+        # 确保代码格式正确
+        stock_list['code'] = stock_list['code'].astype(str).str.zfill(6)
+        
+        logger.info(f"成功获取 {len(stock_list)} 只股票")
+        return stock_list
+        
+    except Exception as e:
+        logger.error(f"获取中国股票列表失败: {e}")
+        # 返回简化的列表以便程序继续运行
+        return pd.DataFrame({
+            'code': ['000001', '600036'],
+            'name': ['平安银行', '招商银行']
+        })
+
+def get_china_annual_reports(stock_code, years=None):
+    """获取指定中国股票的年报信息"""
+    if not AKSHARE_AVAILABLE:
+        logger.error("AKShare未安装，无法获取中国年报信息")
+        return pd.DataFrame()
     
-    # 最后的fallback，创建一个最小的DataFrame来避免处理None
-    current_year = datetime.now().year
-    dummy_data = {
-        'title': [f"{stock_code}_{current_year-1}年年度报告"],
-        'url': [f"http://placeholder.url/{stock_code}_{current_year-1}_annual_report.pdf"],
-        'date': [f"{current_year-1}-12-31"]
-    }
-    return pd.DataFrame(dummy_data)
+    logger.info(f"获取 {stock_code} 的年报信息")
+    
+    # 设置默认年份范围(最近5年)
+    if years is None:
+        current_year = datetime.now().year
+        years = list(range(current_year-5, current_year+1))
+    
+    all_reports = []
+    
+    try:
+        # 使用AKShare获取公告信息
+        for year in years:
+            try:
+                # 设置日期范围
+                start_date = f"{year}-01-01"
+                end_date = f"{year}-12-31"
+                
+                # 获取公告信息
+                announcement_df = ak.stock_zh_a_disclosure_report_cninfo(
+                    symbol=stock_code,
+                    start_date=start_date,
+                    end_date=end_date
+                )
+                
+                if isinstance(announcement_df, pd.DataFrame) and not announcement_df.empty:
+                    # 查找标题列
+                    title_col = None
+                    for col in announcement_df.columns:
+                        if '标题' in col or 'title' in str(col).lower():
+                            title_col = col
+                            break
+                    
+                    if title_col:
+                        # 筛选年报公告
+                        year_reports = announcement_df[
+                            announcement_df[title_col].str.contains(
+                                f"{year}.*年度报告|{year}.*年报", 
+                                regex=True, 
+                                na=False
+                            )
+                        ]
+                        
+                        if not year_reports.empty:
+                            # 提取URL列
+                            url_col = None
+                            for col in announcement_df.columns:
+                                if '链接' in col or 'url' in str(col).lower() or 'link' in str(col).lower():
+                                    url_col = col
+                                    break
+                            
+                            if url_col:
+                                for _, row in year_reports.iterrows():
+                                    # 提取详情页链接
+                                    detail_url = row[url_col]
+                                    if not detail_url.lower().endswith('.pdf'):
+                                        # 尝试构造PDF链接
+                                        if 'announcementId' in row:
+                                            pdf_url = f"http://static.cninfo.com.cn/finalpage/{row['announcementId']}.PDF"
+                                        elif 'link_id' in row:
+                                            pdf_url = f"http://static.cninfo.com.cn/finalpage/{row['link_id']}.PDF"
+                                        else:
+                                            pdf_url = detail_url
+                                    else:
+                                        pdf_url = detail_url
+                                    
+                                    all_reports.append({
+                                        'stock_code': stock_code,
+                                        'year': year,
+                                        'title': row[title_col],
+                                        'url': pdf_url,
+                                        'detail_url': detail_url
+                                    })
+            except Exception as e:
+                logger.warning(f"获取 {stock_code} {year}年公告时出错: {e}")
+                
+                # 使用备用查询URL
+                search_url = f"http://www.cninfo.com.cn/new/fulltextSearch/full?searchkey={stock_code}+{year}年度报告&sdate=&edate=&isfulltext=false&sortName=pubdate&sortType=desc"
+                all_reports.append({
+                    'stock_code': stock_code,
+                    'year': year,
+                    'title': f"{stock_code}_{year}年年度报告(备用链接)",
+                    'url': search_url,
+                    'detail_url': search_url
+                })
+                logger.info(f"使用备用链接 {stock_code} {year}年")
+    
+    except Exception as e:
+        logger.warning(f"获取年报信息时出错: {e}")
+    
+    # 如果没有找到报告，创建占位信息
+    if not all_reports:
+        for year in years:
+            search_url = f"http://www.cninfo.com.cn/new/fulltextSearch/full?searchkey={stock_code}+{year}年度报告&sdate=&edate=&isfulltext=false&sortName=pubdate&sortType=desc"
+            all_reports.append({
+                'stock_code': stock_code,
+                'year': year,
+                'title': f"{stock_code}_{year}年年度报告(占位)",
+                'url': search_url,
+                'detail_url': search_url
+            })
+    
+    return pd.DataFrame(all_reports)
 
-def download_annual_reports(stock_list, save_dir, min_year=2018, delay=2):
-    """
-    Download annual reports for the given stock list (Corrected Version)
-
-    Args:
-        stock_list (pd.DataFrame): DataFrame with stock codes and names
-        save_dir (str): Directory to save downloaded reports
-        min_year (int): Minimum year for reports to download
-        delay (int): Delay between downloads in seconds
-
-    Returns:
-        pd.DataFrame: DataFrame with download results
-    """
-    # Create save directory if it doesn't exist
+def download_china_annual_reports(stock_list, save_dir, min_year=2018, max_year=None, delay=1, max_stocks=None):
+    """下载中国公司年报"""
+    # 创建保存目录
     os.makedirs(save_dir, exist_ok=True)
-
-    current_year = datetime.now().year
-    results = []
-    downloaded_count = 0
-
-    # Create subdirectories for each year upfront
-    for year in range(min_year, current_year + 1):
+    
+    # 设置年份范围
+    if max_year is None:
+        max_year = datetime.now().year
+    
+    years = list(range(min_year, max_year + 1))
+    
+    # 为每年创建子目录
+    for year in years:
         year_dir = os.path.join(save_dir, str(year))
         os.makedirs(year_dir, exist_ok=True)
-
-    # Process each stock
-    for _, row in tqdm(stock_list.iterrows(), total=len(stock_list), desc="Downloading Reports"):
+    
+    # 限制股票数量
+    if max_stocks and max_stocks < len(stock_list):
+        logger.info(f"限制处理股票数量为: {max_stocks}")
+        stock_list = stock_list.head(max_stocks)
+    
+    results = []
+    
+    # 处理每只股票
+    for _, row in tqdm(stock_list.iterrows(), total=len(stock_list), desc="下载中国公司年报"):
         stock_code = row['code']
         stock_name = row['name']
-        logger.info(f"Processing stock: {stock_code} - {stock_name}")
-
-        try: # Outer try block for the entire stock processing
-            # 获取公告信息
-            announcements_df = get_stock_announcements(stock_code) # Renamed to avoid confusion
-
-            if announcements_df is None or announcements_df.empty:
-                logger.warning(f"No announcement data retrieved for {stock_code}.")
-                # Create placeholder for the most recent year if no data found at all
-                year = current_year - 1
-                filename = f"{stock_code}_{year}_annual_report_placeholder.pdf"
-                save_path = os.path.join(save_dir, str(year), filename)
-                if not os.path.exists(save_path):
-                    with open(save_path, 'wb') as f:
-                        f.write(b'%PDF-1.4\n% Created by script placeholder\n%EOF\n')
-                    results.append({
-                        'stock_code': stock_code, 'stock_name': stock_name, 'year': year,
-                        'file_path': save_path, 'status': 'placeholder_created_no_data'
-                    })
-                    logger.info(f"Created placeholder for {stock_code} {year} due to no announcement data.")
-                continue # Skip to the next stock
-
-            # Identify title, URL, and date columns (Robustly)
-            title_col, url_col, date_col = None, None, None
-            common_title_cols = ['title', 'announcementTitle', 'disclosureTitle', '标题', '公告标题']
-            common_url_cols = ['url', 'adjUrl', 'attachmentUrl', 'attachmentURL', 'PDF_URL', '链接', '附件链接'] # Added adjUrl
-            common_date_cols = ['date', 'announcementTime', 'publishTime', 'disclosureTime', '日期', '公告日期']
-
-            # Function to find first matching column
-            def find_col(cols_to_check, df_cols):
-                for col in cols_to_check:
-                    if col in df_cols:
-                        return col
-                # Fallback: check lower case and containing keywords
-                for df_col in df_cols:
-                    df_col_str = str(df_col).lower()
-                    for keyword in cols_to_check: # Use keywords from common list
-                         if keyword.lower() in df_col_str:
-                            return df_col
-                return None
-
-            title_col = find_col(common_title_cols, announcements_df.columns)
-            url_col = find_col(common_url_cols, announcements_df.columns)
-            date_col = find_col(common_date_cols, announcements_df.columns)
-
-            if title_col is None:
-                 logger.warning(f"Could not reliably identify title column for {stock_code}. Skipping filtering based on title.")
-                 # Optionally assign a default or skip the stock entirely
-                 # As a fallback, let's try using the first column if it exists
-                 if len(announcements_df.columns) > 0:
-                     title_col = announcements_df.columns[0]
-                     logger.warning(f"Using first column '{title_col}' as fallback title column for {stock_code}.")
-                 else:
-                     logger.error(f"No columns found in announcements dataframe for {stock_code}. Skipping stock.")
-                     continue
-
-
-            logger.info(f"Identified columns for {stock_code}: Title='{title_col}', URL='{url_col}', Date='{date_col}'")
-
-            # Filter for annual reports using the identified title column
-            annual_reports_list = [] # Store filtered reports (as Series/dict)
-            if title_col:
-                for idx, report_series in announcements_df.iterrows():
-                    try:
-                        title = str(report_series[title_col])
-                        # More robust check for '年度报告' and year
-                        if ('年度报告' in title or '年报' in title) and re.search(r'\d{4}', title):
-                             annual_reports_list.append(report_series)
-                             logger.debug(f"Found potential annual report: {title}")
-                    except KeyError:
-                        logger.warning(f"KeyError accessing title column '{title_col}' for an announcement of {stock_code}.")
-                    except Exception as filter_e:
-                        logger.warning(f"Error filtering announcement for {stock_code}: {filter_e}")
-            else:
-                logger.warning(f"Skipping filtering for {stock_code} as no title column was identified.")
-                # Optionally: treat all announcements as potential reports if no title_col
-                # annual_reports_list = [announcements_df.iloc[i] for i in range(len(announcements_df))]
-
-            if not annual_reports_list:
-                logger.warning(f"No potential annual reports found for {stock_code} after filtering.")
-                # Create placeholder for the most recent year if no reports found
-                year = current_year - 1
-                filename = f"{stock_code}_{year}_annual_report_placeholder.pdf"
-                save_path = os.path.join(save_dir, str(year), filename)
-                if not os.path.exists(save_path):
-                    with open(save_path, 'wb') as f:
-                         f.write(b'%PDF-1.4\n% Created by script placeholder (no reports found)\n%EOF\n')
-                    results.append({
-                        'stock_code': stock_code, 'stock_name': stock_name, 'year': year,
-                        'file_path': save_path, 'status': 'placeholder_created_no_report_found'
-                    })
-                    logger.info(f"Created placeholder for {stock_code} {year} as no annual reports were found.")
-                continue # Skip to next stock
-
-            # Process each potential annual report found
-            processed_years = set() # Track years to avoid duplicates if title isn't specific enough
-            for report in annual_reports_list:
-                report_year = None
-                try: # Inner try block for processing a single report entry
-                    # --- Extract Year ---
-                    title = str(report[title_col]) if title_col and title_col in report.index else ""
-                    year_match = re.search(r'(\d{4})', title) # Simple year extraction from title first
-                    if year_match:
-                        extracted_y = int(year_match.group(1))
-                        if min_year <= extracted_y <= current_year:
-                            report_year = extracted_y
-                        else:
-                            logger.debug(f"Year {extracted_y} from title '{title}' out of range ({min_year}-{current_year}).")
-
-                    # Try extracting from date if title didn't yield a valid year
-                    if report_year is None and date_col and date_col in report.index:
-                        date_str = str(report[date_col])
-                        year_match_date = re.search(r'^(\d{4})', date_str) # Match year at the beginning of the date string
-                        if year_match_date:
-                            extracted_y_date = int(year_match_date.group(1))
-                            # Annual report usually refers to the *previous* year's results
-                            potential_report_year = extracted_y_date - 1
-                            if min_year <= potential_report_year <= current_year:
-                                report_year = potential_report_year
-                                logger.debug(f"Extracted year {report_year} from date {date_str} (assuming report for previous year).")
-                            else:
-                                logger.debug(f"Year {potential_report_year} derived from date '{date_str}' out of range ({min_year}-{current_year}).")
-
-                    # Final fallback or if year extraction failed
-                    if report_year is None:
-                        report_year = current_year - 1 # Fallback to previous year
-                        logger.warning(f"Could not determine report year for '{title}', falling back to {report_year}.")
-
-                    # Skip if year is outside the desired range or already processed
-                    if not (min_year <= report_year <= current_year):
-                         logger.info(f"Skipping report for year {report_year} (outside range {min_year}-{current_year}) for stock {stock_code}.")
-                         continue
-                    if report_year in processed_years:
-                        logger.info(f"Skipping duplicate report for year {report_year} for stock {stock_code}.")
-                        continue
-
-                    # --- Prepare filename and path ---
-                    filename = f"{stock_code}_{report_year}_annual_report.pdf"
-                    year_dir = os.path.join(save_dir, str(report_year))
-                    os.makedirs(year_dir, exist_ok=True) # Ensure year directory exists
-                    save_path = os.path.join(year_dir, filename)
-
-                    # Check if file already exists
-                    if os.path.exists(save_path):
-                        logger.info(f"Report already exists: {save_path}")
-                        results.append({
-                            'stock_code': stock_code, 'stock_name': stock_name, 'year': report_year,
-                            'file_path': save_path, 'status': 'existing'
-                        })
-                        processed_years.add(report_year)
-                        continue
-
-                    # --- Get PDF URL (Corrected Logic) ---
-                    pdf_url = None
-                    if url_col and url_col in report.index:
-                        url_val = report[url_col]
-                        if isinstance(url_val, str) and url_val.strip(): # Check if string and not empty
-                            url_val = url_val.strip()
-                            if url_val.startswith('http'):
-                                pdf_url = url_val
-                            elif url_val.startswith('/'): # Handle cninfo relative URLs
-                                pdf_url = f"http://www.cninfo.com.cn{url_val}"
-                                logger.debug(f"Constructed cninfo URL: {pdf_url}")
-                            else:
-                                logger.warning(f"URL value '{url_val}' for {stock_code} {report_year} is not a recognized format (http or /).")
-                        elif url_val:
-                             logger.warning(f"URL value in column '{url_col}' is not a string: {url_val} (Type: {type(url_val)}) for {stock_code} {report_year}.")
-                        # else: url_val is None or empty string, do nothing
-                    else:
-                        logger.warning(f"URL column '{url_col}' not found in report data or was not identified for {stock_code} {report_year}.")
-
-                    # --- Download or Create Placeholder ---
-                    if pdf_url:
-                        logger.info(f"Attempting to download report for {stock_code} {report_year} from {pdf_url}")
-                        download_success = download_with_retry(pdf_url, save_path)
-                        if download_success:
-                            logger.info(f"Successfully downloaded: {save_path}")
-                            results.append({
-                                'stock_code': stock_code, 'stock_name': stock_name, 'year': report_year,
-                                'file_path': save_path, 'status': 'downloaded'
-                            })
-                            downloaded_count += 1
-                        else:
-                            # Create placeholder if download failed after retries
-                            logger.warning(f"Download failed for {pdf_url}. Creating placeholder.")
-                            with open(save_path, 'wb') as f:
-                                f.write(b'%PDF-1.4\n% Created by script placeholder (download failed)\n%EOF\n')
-                            results.append({
-                                'stock_code': stock_code, 'stock_name': stock_name, 'year': report_year,
-                                'file_path': save_path, 'status': 'placeholder_created_download_failed'
-                            })
-                    else:
-                        # Create placeholder if no URL was found
-                        logger.warning(f"No valid download URL found for {stock_code} {report_year}. Creating placeholder.")
-                        with open(save_path, 'wb') as f:
-                            f.write(b'%PDF-1.4\n% Created by script placeholder (no URL found)\n%EOF\n')
-                        results.append({
-                            'stock_code': stock_code, 'stock_name': stock_name, 'year': report_year,
-                            'file_path': save_path, 'status': 'placeholder_created_no_url'
-                        })
-
-                    processed_years.add(report_year) # Mark year as processed
-                    time.sleep(delay) # Add delay after each attempt (download or placeholder)
-
-                except Exception as inner_e:
-                    # Catch errors during processing of a single report entry
-                    logger.error(f"Error processing a report entry for {stock_code} (Year: {report_year if report_year else 'Unknown'}): {inner_e}", exc_info=True) # Add traceback
-                    # Attempt to create placeholder even if processing failed mid-way
-                    if report_year and min_year <= report_year <= current_year:
-                         filename = f"{stock_code}_{report_year}_annual_report_placeholder_error.pdf"
-                         year_dir = os.path.join(save_dir, str(report_year))
-                         os.makedirs(year_dir, exist_ok=True)
-                         save_path = os.path.join(year_dir, filename)
-                         if not os.path.exists(save_path):
-                            with open(save_path, 'wb') as f:
-                                f.write(b'%PDF-1.4\n% Created by script placeholder (processing error)\n%EOF\n')
-                            results.append({
-                                'stock_code': stock_code, 'stock_name': stock_name, 'year': report_year,
-                                'file_path': save_path, 'status': 'placeholder_created_processing_error'
-                            })
-                            processed_years.add(report_year) # Still mark as processed to avoid retries in this run
-
-
-        except Exception as outer_e:
-            # Catch errors during the processing of the entire stock (e.g., in get_stock_announcements or column identification)
-            # This is where the original UnboundLocalError likely occurred if an error happened before the 'report' loop
-            logger.error(f"Failed processing stock {stock_code} - {stock_name}: {outer_e}", exc_info=True) # Add traceback
-            results.append({
-                'stock_code': stock_code,
-                'stock_name': stock_name,
-                'year': None, # Year is unknown if error happened before processing reports
-                'file_path': None,
-                'status': 'error_processing_stock',
-                'error': str(outer_e)
-            })
-            # Optional: Add a small delay even after an error for a stock
-            time.sleep(1)
-
-
-    # --- Final Summary and Save Results ---
-    results_df = pd.DataFrame(results)
-
-    if results_df.empty:
-        logger.warning("Processing complete. No reports were downloaded, found, or created as placeholders.")
-    else:
-        # Save results to CSV
-        results_path = os.path.join(save_dir, 'download_results.csv')
+        logger.info(f"处理股票: {stock_code} - {stock_name}")
+        
         try:
-            results_df.to_csv(results_path, index=False, encoding='utf-8-sig')
-            logger.info(f"Download results saved to {results_path}")
-        except Exception as csv_e:
-            logger.error(f"Failed to save results CSV to {results_path}: {csv_e}")
-
-        # Log summary statistics
-        status_counts = results_df['status'].value_counts()
-        logger.info("Download process finished. Summary:")
-        for status, count in status_counts.items():
-             logger.info(f"  - {status}: {count}")
-
+            # 获取年报信息
+            annual_reports = get_china_annual_reports(stock_code, years)
+            
+            # 下载每年的年报
+            for year in years:
+                # 准备文件路径
+                filename = f"{stock_code}_{year}_annual_report.pdf"
+                year_dir = os.path.join(save_dir, str(year))
+                save_path = os.path.join(year_dir, filename)
+                
+                # 检查文件是否已经存在
+                if os.path.exists(save_path) and os.path.getsize(save_path) > 1024:
+                    logger.info(f"文件已存在: {save_path}")
+                    results.append({
+                        'stock_code': stock_code,
+                        'stock_name': stock_name,
+                        'year': year,
+                        'file_path': save_path,
+                        'status': 'existing'
+                    })
+                    continue
+                
+                # 查找对应年份的年报
+                year_report = annual_reports[annual_reports['year'] == year]
+                
+                if year_report.empty:
+                    logger.warning(f"未找到 {stock_code} {year}年的年报信息")
+                    continue
+                
+                # 获取URL
+                url = year_report.iloc[0]['url']
+                
+                # 下载PDF
+                logger.info(f"开始下载 {stock_code} {year}年年报: {url}")
+                download_success = download_with_retry(url, save_path)
+                
+                if download_success:
+                    logger.info(f"成功下载 {stock_code} {year}年年报")
+                    results.append({
+                        'stock_code': stock_code,
+                        'stock_name': stock_name,
+                        'year': year,
+                        'file_path': save_path,
+                        'status': 'downloaded'
+                    })
+                else:
+                    # 尝试使用detail_url
+                    detail_url = year_report.iloc[0]['detail_url']
+                    if detail_url != url:
+                        logger.info(f"尝试使用备用链接下载: {detail_url}")
+                        download_success = download_with_retry(detail_url, save_path)
+                        
+                        if download_success:
+                            logger.info(f"成功通过备用链接下载 {stock_code} {year}年年报")
+                            results.append({
+                                'stock_code': stock_code,
+                                'stock_name': stock_name,
+                                'year': year,
+                                'file_path': save_path,
+                                'status': 'downloaded'
+                            })
+                        else:
+                            logger.error(f"下载 {stock_code} {year}年年报失败")
+                            results.append({
+                                'stock_code': stock_code,
+                                'stock_name': stock_name,
+                                'year': year,
+                                'file_path': save_path,
+                                'status': 'failed'
+                            })
+                    else:
+                        logger.error(f"下载 {stock_code} {year}年年报失败")
+                        results.append({
+                            'stock_code': stock_code,
+                            'stock_name': stock_name,
+                            'year': year,
+                            'file_path': save_path,
+                            'status': 'failed'
+                        })
+                
+                # 添加延迟避免请求过快
+                time.sleep(delay)
+                
+        except Exception as e:
+            logger.error(f"处理股票 {stock_code} 时出错: {e}")
+    
+    # 保存结果
+    results_df = pd.DataFrame(results)
+    if not results_df.empty:
+        results_path = os.path.join(save_dir, 'download_results_china.csv')
+        results_df.to_csv(results_path, index=False, encoding='utf-8-sig')
+        logger.info(f"下载结果已保存到: {results_path}")
+    
     return results_df
 
+#########################################
+# 美国市场相关函数
+#########################################
 
-def main():
-    """Main function to run the download process"""
-    parser = argparse.ArgumentParser(description='Download annual reports for Chinese listed companies')
-    parser.add_argument('--config_path', type=str, default='config/config.json', 
-                        help='Path to configuration file')
-    args = parser.parse_args()
+def get_us_stock_list(index_name="S&P500", max_count=500):
+    """获取美国股票列表"""
+    logger.info(f"获取美国 {index_name} 的股票列表")
     
-    # Load configuration
-    config = load_config(args.config_path)
+    try:
+        if index_name == "S&P500":
+            # 从维基百科获取标普500成分股
+            sp500 = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
+            stock_list = sp500[0][['Symbol', 'Security']]
+            stock_list.columns = ['code', 'name']
+        elif index_name == "S&P400":
+            # 获取标普中盘400成分股
+            sp400 = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_400_companies')
+            stock_list = sp400[0][['Symbol', 'Security']]
+            stock_list.columns = ['code', 'name']
+        elif index_name == "S&P600":
+            # 获取标普小盘600成分股
+            sp600 = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_600_companies')
+            stock_list = sp600[0][['Symbol', 'Security']]
+            stock_list.columns = ['code', 'name']
+        else:
+            # 如果非标准指数，获取标普500作为默认
+            sp500 = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
+            stock_list = sp500[0][['Symbol', 'Security']]
+            stock_list.columns = ['code', 'name']
+        
+        # 限制股票数量
+        if max_count and max_count < len(stock_list):
+            stock_list = stock_list.head(max_count)
+        
+        # 清理代码中的特殊字符
+        stock_list['code'] = stock_list['code'].str.replace('.', '-')
+        
+        logger.info(f"成功获取 {len(stock_list)} 只美国股票")
+        return stock_list
     
-    # Get stock list
-    index_name = config.get('china_stock_index', 'CSI300')
-    stock_list = get_stock_list(index_name)
-    
-    if len(stock_list) == 0:
-        logger.error("股票列表为空，无法继续下载")
-        return
-    
-    # Download annual reports
-    save_dir = config.get('annual_reports_html_save_directory', './data/raw/annual_reports')
-    min_year = config.get('min_year', 2018)
-    delay = config.get('download_delay', 2)
-    
-    download_annual_reports(
-        stock_list=stock_list,
-        save_dir=save_dir,
-        min_year=min_year,
-        delay=delay
-    )
+    except Exception as e:
+        logger.error(f"获取美国股票列表失败: {e}")
+        # 返回简化的列表以便程序继续运行
+        return pd.DataFrame({
+            'code': ['AAPL', 'MSFT', 'AMZN', 'GOOGL', 'META'],
+            'name': ['Apple Inc.', 'Microsoft Corporation', 'Amazon.com Inc.', 'Alphabet Inc.', 'Meta Platforms Inc.']
+        })
 
-if __name__ == "__main__":
-    main()
+def get_us_annual_reports(stock_code, api_key, years=None):
+    """
+    使用Financial Modeling Prep API获取美国公司10-K报告
+    
+    Args:
+        stock_code: 股票代码
+        api_key: Financial Modeling Prep API密钥
+        years: 年份列表，None则获取最近5年
+        
+    Returns:
+        DataFrame: 包含10-K报告信息
+    """
+    logger.info(f"获取 {stock_code} 的10-K报告信息")
+    
+    # 设置默认年份范围(最近5年)
+    if years is None:
+        current_year = datetime.now().year
+        years = list(range(current_year-5, current_year+1))
+    
+    # 构建API请求URL
+    url = f"https://financialmodelingprep.com/api/v3/sec_filings/{stock_code}?type=10-K&page=0&apikey={api_key}"
+    
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+        
+        all_reports = []
+        
+        # 筛选10-K报告
+        for item in data:
+            filing_type = item.get('type', '')
+            if filing_type.lower() not in ['10-k', '10k']:
+                continue
+                
+            date_string = item.get('fillingDate', '')
+            if not date_string:
+                continue
+                
+            date = date_string[:10]
+            year = int(date_string[:4])
+            
+            # 检查年份是否在指定范围内
+            if year not in years:
+                continue
+                
+            # 获取报告链接
+            report_url = item.get('finalLink', '')
+            if not report_url:
+                continue
+                
+            all_reports.append({
+                'stock_code': stock_code,
+                'year': year,
+                'title': f"{stock_code} {year} Annual Report (10-K)",
+                'url': report_url,
+                'detail_url': report_url,
+                'filing_date': date
+            })
+        
+        # 如果没有找到报告，创建占位信息
+        if not all_reports:
+            for year in years:
+                all_reports.append({
+                    'stock_code': stock_code,
+                    'year': year,
+                    'title': f"{stock_code} {year} Annual Report (Not Found)",
+                    'url': '',
+                    'detail_url': '',
+                    'filing_date': f"{year}-12-31"
+                })
+        
+        return pd.DataFrame(all_reports)
+    
+    except Exception as e:
+        logger.error(f"获取 {stock_code} 的10-K报告失败: {e}")
+        
+        # 返回占位数据
+        all_reports = []
+        for year in years:
+            all_reports.append({
+                'stock_code': stock_code,
+                'year': year,
+                'title': f"{stock_code} {year} Annual Report (Error)",
+                'url': '',
+                'detail_url': '',
+                'filing_date': f"{year}-12-31"
+            })
+        
+        return pd.DataFrame(all_reports)
+
+def download_us_annual_reports(stock_list, save_dir, api_key, min_year=2018, max_year=None, delay=1, max_stocks=None):
+    """
+    下载美国公司10-K报告
+    
+    Args:
+        stock_list: 股票列表DataFrame
+        save_dir: 保存目录
+        api_key: Financial Modeling Prep API密钥
+        min_year: 最早年份
+        max_year: 最晚年份(默认当前年份)
+        delay: 请求延迟时间(秒)
+        max_stocks: 最多处理的股票数量
+        
+    Returns:
+        DataFrame: 下载结果
+    """
+    # 创建保存目录
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # 设置年份范围
+    if max_year is None:
+        max_year = datetime.now().year
+    
+    years = list(range(min_year, max_year + 1))
+    
+    # 为每年创建子目录
+    for year in years:
+        year_dir = os.path.join(save_dir, str(year))
+        os.makedirs(year_dir, exist_ok=True)
+    
+    # 限制股票数量
+    if max_stocks and max_stocks < len(stock_list):
+        logger.info(f"限制处理股票数量为: {max_stocks}")
+        stock_list = stock_list.head(max_stocks)
+    
+    results = []
+    
+    # 处理每只股票
+    for _, row in tqdm(stock_list.iterrows(), total=len(stock_list), desc="下载美国公司年报"):
+        stock_code = row['code']
+        stock_name = row['name']
+        logger.info(f"处理股票: {stock_code} - {stock_name}")
+        
+        try:
+            # 获取10-K报告信息
+            annual_reports = get_us_annual_reports(stock_code, api_key, years)
+            
+            # 下载每年的报告
+            for year in years:
+                # 准备文件路径
+                filename = f"{stock_code}_{year}_annual_report.html"
+                year_dir = os.path.join(save_dir, str(year))
+                save_path = os.path.join(year_dir, filename)
+                
+                # 检查文件是否已经存在
+                if os.path.exists(save_path) and os.path.getsize(save_path) > 1024:
+                    logger.info(f"文件已存在: {save_path}")
+                    results.append({
+                        'stock_code': stock_code,
+                        'stock_name': stock_name,
+                        'year': year,
+                        'file_path': save_path,
+                        'status': 'existing'
+                    })
+                    continue
+                
+                # 查找对应年份的报告
+                year_report = annual_reports[annual_reports['year'] == year]
+                
+                if year_report.empty or not year_report.iloc[0]['url']:
+                    logger.warning(f"未找到 {stock_code} {year}年的10-K报告")
+                    continue
+                
+                # 获取URL
+                url = year_report.iloc[0]['url']
+                
+                # 下载报告
+                logger.info(f"开始下载 {stock_code} {year}年10-K报告: {url}")
+                download_success = download_with_retry(url, save_path)
+                
+                if download_success:
+                    logger.info(f"成功下载 {stock_code} {year}年10-K报告")
+                    results.append({
+                        'stock_code': stock_code,
+                        'stock_name': stock_name,
+                        'year': year,
+                        'file_path': save_path,
+                        'status': 'downloaded'
+                    })
+                else:
+                    logger.error(f"下载 {stock_code} {year}年10-K报告失败")
+                    results.append({
+                        'stock_code': stock_code,
+                        'stock_name': stock_name,
+                        'year': year,
+                        'file_path': save_path,
+                        'status': 'failed'
+                    })
+                
+                # 添加延迟避免请求过快
+                time.sleep(delay)
+                
+        except Exception as e:
+            logger.error(f"处理股票 {stock_code} 时出错: {e}")
+    
+    # 保存结果
+    results_df = pd.DataFrame(results)
+    if not results_df.empty:
+        results_path = os.path.join(save_dir, 'download_results_us.csv')
+        results_df.to_csv(results_path, index=False, encoding='utf-8-sig')
+        logger.info(f"下载结
