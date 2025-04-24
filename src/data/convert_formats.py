@@ -3,7 +3,7 @@
 
 """
 Format Conversion Module for FinLLM-Insight
-This module converts PDF reports to text and performs Chinese text preprocessing.
+This module converts HTML 10-K reports to text for further processing.
 """
 import os
 import sys
@@ -19,13 +19,11 @@ from pathlib import Path
 import re
 import pandas as pd
 from tqdm import tqdm
+from bs4 import BeautifulSoup
 
 # PDF extraction libraries
 import PyPDF2
 import pdfplumber
-
-# For Chinese text processing
-from hanziconv import HanziConv
 
 # Configure logging
 logging.basicConfig(
@@ -56,9 +54,47 @@ def load_config(config_path):
         logger.error(f"Failed to load config: {e}")
         raise
 
+def extract_text_from_html(html_path):
+    """
+    Extract text from HTML file (SEC 10-K report)
+    
+    Args:
+        html_path (str): Path to the HTML file
+        
+    Returns:
+        str: Extracted text
+    """
+    logger.info(f"Extracting text from HTML: {html_path}")
+    
+    try:
+        with open(html_path, 'r', encoding='utf-8', errors='replace') as f:
+            html_content = f.read()
+        
+        # Parse HTML with BeautifulSoup
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Remove script and style elements
+        for script in soup(["script", "style"]):
+            script.extract()
+        
+        # Extract text
+        text = soup.get_text(separator=' ')
+        
+        # Clean up text
+        # Replace multiple spaces with single space
+        text = re.sub(r'\s+', ' ', text)
+        # Replace multiple newlines with double newline
+        text = re.sub(r'\n\s*\n', '\n\n', text)
+        
+        return text
+    
+    except Exception as e:
+        logger.error(f"Failed to extract text from HTML: {e}")
+        return None
+
 def extract_text_from_pdf(pdf_path, method='pdfplumber'):
     """
-    Extract text from PDF file using specified method
+    Extract text from PDF file (backup method)
     
     Args:
         pdf_path (str): Path to the PDF file
@@ -67,7 +103,7 @@ def extract_text_from_pdf(pdf_path, method='pdfplumber'):
     Returns:
         str: Extracted text
     """
-    logger.info(f"Extracting text from: {pdf_path}")
+    logger.info(f"Extracting text from PDF: {pdf_path}")
     
     if method == 'pdfplumber':
         try:
@@ -101,12 +137,12 @@ def extract_text_from_pdf(pdf_path, method='pdfplumber'):
     
     raise ValueError(f"Unsupported method: {method}")
 
-def preprocess_chinese_text(text):
+def preprocess_10k_text(text):
     """
-    Preprocess Chinese text
-    - Convert traditional to simplified Chinese
-    - Remove redundant whitespace
-    - Normalize punctuation
+    Preprocess 10-K report text
+    - Remove excessive whitespace
+    - Clean up special characters
+    - Extract meaningful sections
     
     Args:
         text (str): Original text
@@ -114,52 +150,54 @@ def preprocess_chinese_text(text):
     Returns:
         str: Preprocessed text
     """
-    # Convert traditional to simplified Chinese
-    text = HanziConv.toSimplified(text)
-    
     # Remove excessive whitespace
     text = re.sub(r'\s+', ' ', text)
     
-    # Normalize various whitespace characters
-    text = re.sub(r'[\u3000\u00A0\u2002-\u200A\u202F\u205F]', ' ', text)
+    # Remove special characters that aren't useful
+    text = re.sub(r'[^\w\s\.\,\;\:\-\(\)\[\]\{\}\"\'\$\%\&\@\!\?\/\\\|]', '', text)
     
-    # Remove special characters that are not useful
-    text = re.sub(r'[^\u4e00-\u9fff\u3000-\u303f\uff00-\uffef\u2000-\u206f\u0000-\u007f]', '', text)
+    # Look for common 10-K sections and highlight them
+    important_sections = [
+        "Business",
+        "Risk Factors", 
+        "Management's Discussion and Analysis",
+        "Financial Statements",
+        "Controls and Procedures",
+        "Executive Officers",
+        "Management",
+        "Corporate Governance",
+        "Executive Compensation",
+        "Security Ownership",
+        "Related Party Transactions"
+    ]
     
-    # Normalize punctuation
-    punctuation_map = {
-        '：': ': ',
-        '；': '; ',
-        '，': ', ',
-        '。': '. ',
-        '！': '! ',
-        '？': '? ',
-        '"': '"',
-        '"': '"',
-        ''': "'",
-        ''': "'",
-        '（': '(',
-        '）': ')',
-        '【': '[',
-        '】': ']',
-        '《': '<',
-        '》': '>',
-    }
+    for section in important_sections:
+        # Look for section headers using regex
+        pattern = r'(Item\s+\d+[A-Z]?\s*[.-]\s*' + section + r')'
+        matches = re.finditer(pattern, text, re.IGNORECASE)
+        
+        # Add section markers
+        for match in matches:
+            start_pos = match.start()
+            if start_pos > 0:
+                # Insert a section marker
+                text = text[:start_pos] + "\n\n=== " + match.group(1).upper() + " ===\n\n" + text[start_pos + len(match.group(1)):]
     
-    for cn_punct, en_punct in punctuation_map.items():
-        text = text.replace(cn_punct, en_punct)
+    # Strip excessive line breaks
+    text = re.sub(r'\n{3,}', '\n\n', text)
     
     return text.strip()
 
-def process_pdf_files(input_dir, output_dir, years=None, overwrite=False):
+def process_report_files(input_dir, output_dir, years=None, overwrite=False, file_type='html'):
     """
-    Process all PDF files in the input directory and save as text
+    Process report files and save as text
     
     Args:
-        input_dir (str): Directory containing PDF files
+        input_dir (str): Directory containing report files
         output_dir (str): Directory to save processed text files
         years (list): List of years to process, or None for all
         overwrite (bool): Whether to overwrite existing files
+        file_type (str): Type of files to process ('html' or 'pdf')
         
     Returns:
         pd.DataFrame: Results of the conversion process
@@ -167,8 +205,8 @@ def process_pdf_files(input_dir, output_dir, years=None, overwrite=False):
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
     
-    # Get all PDF files
-    pdf_files = []
+    # Get all report files
+    report_files = []
     
     if years:
         # Process specific years
@@ -176,29 +214,29 @@ def process_pdf_files(input_dir, output_dir, years=None, overwrite=False):
             year_dir = os.path.join(input_dir, str(year))
             if os.path.exists(year_dir):
                 for file in os.listdir(year_dir):
-                    if file.endswith('.pdf'):
-                        pdf_files.append((os.path.join(year_dir, file), year))
+                    if file.endswith(f'.{file_type}'):
+                        report_files.append((os.path.join(year_dir, file), year))
     else:
         # Process all files
         for root, _, files in os.walk(input_dir):
             for file in files:
-                if file.endswith('.pdf'):
+                if file.endswith(f'.{file_type}'):
                     # Extract year from directory name
                     year = os.path.basename(root)
                     if year.isdigit():
-                        pdf_files.append((os.path.join(root, file), year))
+                        report_files.append((os.path.join(root, file), year))
     
     results = []
     
-    # Process each PDF file
-    for pdf_path, year in tqdm(pdf_files, desc="Processing PDF files"):
+    # Process each report file
+    for report_path, year in tqdm(report_files, desc=f"Processing {file_type} files"):
         try:
             # Create year directory in output
             year_output_dir = os.path.join(output_dir, year)
             os.makedirs(year_output_dir, exist_ok=True)
             
             # Get filename without extension
-            file_base = os.path.basename(pdf_path)
+            file_base = os.path.basename(report_path)
             file_name = os.path.splitext(file_base)[0]
             
             # Output text file path
@@ -208,35 +246,51 @@ def process_pdf_files(input_dir, output_dir, years=None, overwrite=False):
             if os.path.exists(text_file_path) and not overwrite:
                 logger.info(f"Skipping existing file: {text_file_path}")
                 results.append({
-                    'pdf_path': pdf_path,
+                    'report_path': report_path,
                     'text_path': text_file_path,
                     'year': year,
                     'status': 'skipped'
                 })
                 continue
             
-            # Extract text from PDF
-            raw_text = extract_text_from_pdf(pdf_path)
+            # Extract text based on file type
+            if file_type == 'html':
+                raw_text = extract_text_from_html(report_path)
+            elif file_type == 'pdf':
+                raw_text = extract_text_from_pdf(report_path)
+            else:
+                logger.error(f"Unsupported file type: {file_type}")
+                continue
+            
+            if not raw_text:
+                logger.warning(f"Failed to extract text from {report_path}")
+                results.append({
+                    'report_path': report_path,
+                    'text_path': None,
+                    'year': year,
+                    'status': 'extraction_failed'
+                })
+                continue
             
             # Preprocess text
-            processed_text = preprocess_chinese_text(raw_text)
+            processed_text = preprocess_10k_text(raw_text)
             
             # Save processed text
             with open(text_file_path, 'w', encoding='utf-8') as f:
                 f.write(processed_text)
             
-            logger.info(f"Processed: {pdf_path} -> {text_file_path}")
+            logger.info(f"Processed: {report_path} -> {text_file_path}")
             results.append({
-                'pdf_path': pdf_path,
+                'report_path': report_path,
                 'text_path': text_file_path,
                 'year': year,
                 'status': 'success'
             })
             
         except Exception as e:
-            logger.error(f"Error processing {pdf_path}: {e}")
+            logger.error(f"Error processing {report_path}: {e}")
             results.append({
-                'pdf_path': pdf_path,
+                'report_path': report_path,
                 'text_path': None,
                 'year': year,
                 'status': 'error',
@@ -255,11 +309,13 @@ def process_pdf_files(input_dir, output_dir, years=None, overwrite=False):
 
 def main():
     """Main function to run the conversion process"""
-    parser = argparse.ArgumentParser(description='Convert annual reports from PDF to text')
+    parser = argparse.ArgumentParser(description='Convert annual reports to text format')
     parser.add_argument('--config_path', type=str, default='config/config.json', 
                         help='Path to configuration file')
     parser.add_argument('--overwrite', action='store_true', 
                         help='Overwrite existing files')
+    parser.add_argument('--file_type', type=str, default='html', choices=['html', 'pdf'],
+                        help='Type of files to process')
     args = parser.parse_args()
     
     # Load configuration
@@ -271,15 +327,22 @@ def main():
     
     # Get years to process
     min_year = config.get('min_year', 2018)
-    years = list(range(min_year, 2026))  # Processing reports up to 2025
+    max_year = config.get('max_year', None)
     
-    # Process PDF files
-    process_pdf_files(
+    if max_year is None:
+        max_year = datetime.now().year
+        
+    years = list(range(min_year, max_year + 1))
+    
+    # Process report files
+    process_report_files(
         input_dir=input_dir,
         output_dir=output_dir,
         years=years,
-        overwrite=args.overwrite
+        overwrite=args.overwrite,
+        file_type=args.file_type
     )
 
 if __name__ == "__main__":
+    from datetime import datetime
     main()
