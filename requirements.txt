@@ -6,13 +6,13 @@ numpy>=1.20.0
 tqdm>=4.61.0
 
 # 数据获取
-akshare>=1.0.0
 requests>=2.25.1
+beautifulsoup4>=4.9.3
+yfinance>=0.2.3
 
 # 文件处理
 PyPDF2>=2.10.0
 pdfplumber>=0.7.0
-hanziconv>=0.3.2
 
 # 机器学习
 scikit-learn>=1.0.0
