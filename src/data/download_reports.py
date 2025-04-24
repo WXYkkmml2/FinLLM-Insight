@@ -535,7 +535,241 @@ def download_annual_reports(stock_list, save_dir, api_key, min_year=2018, max_ye
 
     return results_df # Return the results DataFrame
 
+def download_annual_reports(stock_list, save_dir, api_key, min_year=2018, max_year=None, delay=60, max_stocks=None):
+    """
+    Download annual reports for the given stock list.
 
+    Args:
+        stock_list (pd.DataFrame): DataFrame with stock codes and names
+        save_dir (str): Directory to save downloaded reports
+        api_key (str): Financial Modeling Prep API key
+        min_year (int): Minimum year for reports to download
+        max_year (int): Maximum year for reports to download (default: current year)
+        delay (int): Delay in seconds to wait *between processing each report*.
+                     This is the main delay to avoid hitting SEC too fast.
+        max_stocks (int): Maximum number of stocks to process
+
+    Returns:
+        pd.DataFrame: DataFrame with download results
+    """
+    # Adjust save_dir to be relative to project_root
+    # project_root is defined at the top of the script
+    resolved_save_dir = os.path.join(project_root, save_dir)
+    os.makedirs(resolved_save_dir, exist_ok=True)
+    logger.info(f"Saving reports to: {resolved_save_dir}")
+
+
+    # Set max_year to current year if not specified
+    if max_year is None:
+        max_year = datetime.now().year
+
+    # Create subdirectory for each year within the save_dir
+    years_range = list(range(min_year, max_year + 1))
+    for year in years_range:
+        year_dir = os.path.join(resolved_save_dir, str(year))
+        os.makedirs(year_dir, exist_ok=True)
+
+
+    # Limit number of stocks if specified (handled in get_stock_list, but included for clarity)
+    if max_stocks is not None and max_stocks > 0 and max_stocks < len(stock_list):
+         logger.info(f"Limiting processing to {max_stocks} stocks from the list.")
+         stock_list = stock_list.head(max_stocks)
+
+
+    results = []
+    # Counters for summary
+    download_count = 0
+    failed_count = 0
+    skipped_existing = 0
+    no_reports_found_count = 0
+    no_report_for_year_count = 0
+    error_count = 0
+
+
+    # Process each stock
+    # tqdm provides the progress bar
+    for idx, row in tqdm(stock_list.iterrows(), total=len(stock_list), desc="Downloading Annual Reports"):
+        ticker = row['ticker']
+        company_name = row['company_name']
+        logger.info(f"\n--- Processing Stock ({idx + 1}/{len(stock_list)}): {ticker} - {company_name} ---")
+
+        # List to track years processed for this stock within the range
+        processed_years_this_stock = set()
+
+
+        try:
+            # Get annual report information for this stock from FMP
+            annual_reports = get_annual_reports(ticker, api_key, min_year, max_year)
+
+            # Convert DataFrame to list of dicts for easier iteration
+            reports_from_fmp = annual_reports.to_dict('records')
+
+            if not reports_from_fmp: # Check if FMP returned ANY eligible reports
+                logger.warning(f"No eligible 10-K reports found by FMP for {ticker} in the specified years.")
+                # Add 'no_reports_found' status for all years in range for this stock
+                for year in years_range:
+                     results.append({
+                         'ticker': ticker, 'company_name': company_name, 'year': year,
+                         'filing_date': None, 'file_path': '', 'status': 'no_reports_found' # Ensure filing_date is None
+                     })
+                     processed_years_this_stock.add(year) # Mark these years as processed
+                no_reports_found_count += len(years_range) # Increment count for all years in range
+                # Still apply delay before next stock, helps pace API/SEC requests
+                logger.info(f"Waiting {delay}s before processing next stock...")
+                time.sleep(delay)
+                continue # Move to the next stock
+
+
+            # Add delay BEFORE the first download attempt for this stock/report
+            # This applies even if FMP found reports
+            logger.info(f"Waiting {delay}s before first download attempt for {ticker}...")
+            time.sleep(delay)
+
+            # Download reports for each year found for this stock by FMP
+            for i, report in enumerate(reports_from_fmp):
+                year = report['year']
+                url = report['url']
+                filing_date = report['filing_date'] # Get the filing date from FMP data
+
+                processed_years_this_stock.add(year) # Mark this specific year as processed
+
+                # Prepare file path
+                # Use resolved_save_dir
+                filename = f"{ticker}_{year}_annual_report.html"
+                year_dir = os.path.join(resolved_save_dir, str(year))
+                save_path = os.path.join(year_dir, filename)
+
+                # Check if file already exists and is not too small
+                if os.path.exists(save_path) and os.path.getsize(save_path) > 1024: # > 1KB check
+                    logger.info(f"File already exists and is likely complete: {save_path}")
+                    results.append({
+                        'ticker': ticker, 'company_name': company_name, 'year': year,
+                        'filing_date': filing_date, 'file_path': save_path, 'status': 'existing' # Include filing_date
+                    })
+                    skipped_existing += 1
+                    # Apply delay even if skipping existing, helps pace
+                    logger.info(f"Waiting {delay}s before processing next report/stock...")
+                    time.sleep(delay)
+                    continue # Skip download, move to next report found by FMP
+
+
+                # Download report - download_file handles retries and uses proxy env vars
+                # Pass a decent initial_delay to download_file for retries on the same URL
+                # The main pacing BETWEEN reports is controlled by time.sleep(delay) BELOW
+                success = download_file(url, save_path, initial_delay=30) # Use a decent delay for retries within the same download attempt
+
+                if success:
+                    logger.info(f"Successfully processed report for {ticker} {year}")
+                    results.append({
+                        'ticker': ticker, 'company_name': company_name, 'year': year,
+                        'filing_date': filing_date, 'file_path': save_path, 'status': 'downloaded' # Include filing_date
+                    })
+                    download_count += 1
+                else:
+                    logger.error(f"Failed to process report for {ticker} {year}")
+                    results.append({
+                        'ticker': ticker, 'company_name': company_name, 'year': year,
+                        'filing_date': filing_date, 'file_path': '', 'status': 'failed' # Include filing_date even on failure
+                    })
+                    failed_count += 1
+
+                # Add delay BETWEEN processing each report (including retries)
+                # This is crucial for pacing requests to SEC/FMP
+                # No delay needed AFTER the very last report of the very last stock
+                # if not (i == len(reports_from_fmp) - 1 and idx == len(stock_list) - 1): # More complex check
+                logger.info(f"Waiting {delay}s before processing next report/stock...")
+                time.sleep(delay)
+
+
+            # After processing all reports found by FMP for this stock,
+            # check for years in the desired range that were NOT returned by FMP
+            for year_in_range in years_range:
+                 # If a year in the desired range was not among those found and processed by FMP
+                 # and it hasn't already been marked with a status (like 'no_reports_found' if FMP returned nothing, or 'error')
+                 if year_in_range not in processed_years_this_stock:
+                      # Check if this year has already been added with any status
+                      if not any(r['ticker'] == ticker and r['year'] == year_in_range for r in results):
+                          results.append({
+                              'ticker': ticker, 'company_name': company_name, 'year': year_in_range,
+                              'filing_date': None, 'file_path': '', 'status': 'no_report_for_year' # Ensure filing_date is None
+                          })
+                          no_report_for_year_count += 1
+
+
+        except Exception as e:
+            logger.error(f"An unexpected error occurred while processing stock {ticker}: {e}", exc_info=True)
+            error_count += 1
+
+            # Add 'error' status for all years in range for this stock
+            # Only add if no status has been added for this specific year yet
+            for year_in_range in years_range:
+                if year_in_range not in processed_years_this_stock: # Check if year was missed before error
+                     if not any(r['ticker'] == ticker and r['year'] == year_in_range for r in results): # Check if year already has a status
+                          results.append({
+                             'ticker': ticker, 'company_name': company_name, 'year': year_in_range,
+                             'filing_date': None, 'file_path': '', 'status': 'error' # Ensure filing_date is None
+                          })
+                          # No need to increment error_count again, it's counted per stock
+
+            # Still apply delay before next stock even if an error occurred
+            logger.info(f"Waiting {delay}s before processing next stock...")
+            time.sleep(delay)
+
+
+    # --- Post-processing and Results ---
+
+    # Create results DataFrame from the collected results
+    # Ensure necessary columns are present even if empty initially
+    results_df = pd.DataFrame(results)
+
+    # Ensure all requested stock/year combinations are in the results_df, filling missing with a default status if needed
+    # This is a robustness check, the logic above should ideally cover all cases
+    all_possible_combinations = pd.MultiIndex.from_product([stock_list['ticker'], years_range], names=['ticker', 'year']).to_frame(index=False)
+    results_df = pd.merge(all_possible_combinations, results_df, on=['ticker', 'year'], how='left')
+
+    # Fill missing 'company_name' and set default status for combinations not processed/accounted for
+    # This ensures the final CSV is complete
+    ticker_to_name_map = stock_list.set_index('ticker')['company_name'].to_dict()
+    results_df['company_name'] = results_df['ticker'].map(ticker_to_name_map)
+    results_df['status'] = results_df['status'].fillna('not_processed') # Default status if row wasn't added at all
+
+
+    # Ensure necessary columns exist and are in the desired order
+    # Using .loc for column reordering to prevent potential SettingWithCopyWarning if needed, though not strictly necessary here
+    final_columns = ['ticker', 'company_name', 'year', 'filing_date', 'file_path', 'status']
+    # Ensure all final_columns exist, adding with None if missing (shouldn't happen with logic above, but safety)
+    for col in final_columns:
+        if col not in results_df.columns:
+            results_df[col] = None
+    results_df = results_df[final_columns]
+
+
+    # Save results to CSV relative to project_root
+    results_path = os.path.join(resolved_save_dir, 'download_results.csv')
+    try:
+        results_df.to_csv(results_path, index=False, encoding='utf-8-sig')
+        logger.info(f"Download results saved to: {results_path}")
+    except Exception as e:
+         logger.error(f"Failed to save results CSV to {results_path}: {e}")
+
+
+    # Print summary
+    if not results_df.empty:
+        logger.info("\n--- Download Summary ---")
+        status_counts = results_df['status'].value_counts()
+        for status, count in status_counts.items():
+            logger.info(f"  {status}: {count}")
+        logger.info("------------------------")
+
+    logger.info(f"Total reports downloaded: {download_count}")
+    logger.info(f"Total existing reports skipped: {skipped_existing}")
+    logger.info(f"Total reports failed to download: {failed_count}")
+    logger.info(f"Total stocks with no reports found by FMP in range: {stock_list[stock_list['ticker'].apply(lambda t: all(r['status'] == 'no_reports_found' for r in results if r['ticker'] == t))].shape[0]}") # Count stocks where ALL years got 'no_reports_found'
+    logger.info(f"Total individual years missed by FMP but in range: {no_report_for_year_count}")
+    logger.info(f"Total stocks encountered errors: {error_count}")
+
+
+    return results_df # Return the results DataFrame
 
 def main():
     """Main function to run the download process"""
