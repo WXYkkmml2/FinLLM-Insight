@@ -7,7 +7,8 @@
     "models_directory": "./models",
     "predictions_directory": "./predictions",
     "us_stock_index": "S&P500",
-    "financial_modelling_prep_api_key": "",
+    "financial_modelling_prep_api_key": "nideapi",
+    "huggingface_api_key": "your_huggingface_api_key_here",
     "min_year": 2020,
     "max_year": 2025,
     "max_stocks": 50,
@@ -22,5 +23,4 @@
     "max_tokens_per_call": 12000,
     "return_windows": [5, 20, 60, 120],
     "target_window": 60
-
 }
