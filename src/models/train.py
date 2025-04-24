@@ -263,7 +263,7 @@ def create_pipeline(model_type='regression', model_name='random_forest'):
         logger.error(f"Error creating pipeline: {e}")
         raise
 
-def train_model(X_train, y_train, model, cv=5):
+def train_model(X_train, y_train, model, cv=2):
     """
     Train a model with cross-validation
     
