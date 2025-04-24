@@ -307,40 +307,91 @@ def process_report_files(input_dir, output_dir, years=None, overwrite=False, fil
     logger.info(f"Conversion complete. Results saved to {results_path}")
     return results_df
 
-def main():
-    """Main function to run the conversion process"""
-    parser = argparse.ArgumentParser(description='Convert 10-K reports to text')
-    parser.add_argument('--config_path', type=str, default='config/config.json', 
-                        help='Path to configuration file')
-    parser.add_argument('--overwrite', action='store_true', 
-                        help='Overwrite existing files')
-    parser.add_argument('--file_type', type=str, default='html', choices=['html', 'pdf'],
-                        help='Type of files to process (html or pdf)')
-    args = parser.parse_args()
-    
-    # Load configuration
-    config = load_config(args.config_path)
-    
-    # Get directories
-    input_dir = config.get('annual_reports_html_save_directory', './data/raw/annual_reports')
-    output_dir = config.get('processed_reports_text_directory', './data/processed/text_reports')
-    
-    # Get years to process
-    min_year = config.get('min_year', 2018)
-    max_year = config.get('max_year')
-    if not max_year:
-        import datetime
-        max_year = datetime.datetime.now().year
-    years = list(range(min_year, max_year + 1))
-    
-    # Process report files
-    process_report_files(
-        input_dir=input_dir,
-        output_dir=output_dir,
-        years=years,
-        overwrite=args.overwrite,
-        file_type=args.file_type
-    )
+# ... (之前的导入和日志配置)
 
+def main():
+    """Main function to run the download process"""
+    parser = argparse.ArgumentParser(description='Download annual reports for US listed companies')
+    parser.add_argument('--config_path', type=str, default='config/config.json',
+                        help='Path to configuration file')
+    parser.add_argument('--max_stocks', type=int, default=0,
+                        help='Maximum number of stocks to process (0 for all)')
+    args = parser.parse_args()
+
+    try:
+        # Load configuration
+        logger.info("Loading configuration")
+        config = load_config(args.config_path)
+
+        # Get API key
+        api_key = config.get('financial_modelling_prep_api_key', '')
+        if not api_key:
+            logger.error("Financial Modeling Prep API key not found in config")
+            return 1
+
+        # >>> 在这里插入读取代理配置并设置环境变量的代码块 <<<
+
+        import os # 确保 os 库已经导入
+
+        http_proxy_url = config.get('http_proxy')
+        https_proxy_url = config.get('https_proxy')
+
+        # 注意：代理认证（用户名和密码）应该直接包含在 config.json 中的代理 URL 字符串里，
+        # 例如："http_proxy": "http://用户名:密码@代理地址:端口"
+        # requests 库会自动解析这种格式。
+
+        if http_proxy_url:
+            os.environ['HTTP_PROXY'] = http_proxy_url
+            logger.info(f"Setting HTTP_PROXY to {http_proxy_url}") # 日志中可能需要隐藏密码
+
+        if https_proxy_url:
+            os.environ['HTTPS_PROXY'] = https_proxy_url
+            logger.info(f"Setting HTTPS_PROXY to {https_proxy_url}") # 日志中可能需要隐藏密码
+
+        # >>> 插入的代码块结束 <<<
+
+
+        # Get stock list
+        logger.info("Getting stock list")
+        # ... (获取股票列表的代码不变)
+        index_name = config.get('us_stock_index', 'S&P500')
+        max_stocks = args.max_stocks if args.max_stocks > 0 else config.get('max_stocks', 50)
+        stock_list = get_stock_list(index_name, max_stocks)
+
+        if len(stock_list) == 0:
+            logger.error("Failed to get stock list")
+            return 1
+
+        # Set parameters
+        save_dir = config.get('annual_reports_html_save_directory', './data/raw/annual_reports')
+        min_year = config.get('min_year', 2018)
+        max_year = config.get('max_year', None)
+        delay = config.get('download_delay', 2) # 这个 delay 依然控制处理不同报告之间的间隔
+
+        # Download annual reports
+        logger.info(f"Starting download of annual reports for years {min_year}-{max_year or 'current'}")
+        download_annual_reports(
+            stock_list=stock_list,
+            save_dir=save_dir,
+            api_key=api_key,
+            min_year=min_year,
+            max_year=max_year,
+            delay=delay, # 传递处理报告之间的延迟
+            max_stocks=max_stocks
+            # 注意：这里不需要传递 proxy_config 参数了给 download_annual_reports 或 download_file
+            # 因为 requests 会自动读取 os.environ 中的 HTTP_PROXY/HTTPS_PROXY
+        )
+
+        logger.info("Annual report download completed successfully")
+        return 0
+
+    except Exception as e:
+        logger.error(f"Error in main function: {e}", exc_info=True)
+        return 1
+
+# ... (download_annual_reports 和 download_file 函数定义不变)
+# 请确保 download_file 函数定义中没有 proxy_config 参数，让它保持简洁：
+# def download_file(url, save_path, max_retries=3, initial_delay=10):
+#     ... requests.get(url, headers=headers, timeout=30) # requests 会自动检查环境变量
 if __name__ == "__main__":
     main()
