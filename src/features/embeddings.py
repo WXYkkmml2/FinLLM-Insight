@@ -223,142 +223,83 @@ def create_embedding_function(embedding_model):
         logger.error(f"Failed to create embedding function: {e}")
         raise
 
-async def process_reports(text_dir, output_dir, embedding_model, chunk_size=1000, chunk_overlap=200):
+def process_reports(text_dir, output_dir, embedding_model, chunk_size=1000, chunk_overlap=200):
     """
-    Process all reports and generate embeddings using synchronous methods
+    Process reports and create embeddings
     
     Args:
         text_dir (str): Directory containing text reports
         output_dir (str): Directory to save embeddings
         embedding_model (str): Name of the embedding model
-        chunk_size (int): Maximum size of each chunk
+        chunk_size (int): Size of each chunk
         chunk_overlap (int): Overlap between chunks
         
     Returns:
         dict: Processing statistics
     """
-    # Create output directory if it doesn't exist
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Create vector database client
+    # Create ChromaDB client
     db_path = os.path.join(output_dir, "chroma_db")
-
-    client = await create_chroma_client(db_path)
-    #client = create_chroma_client(db_path)
-
-    # Create embedding function based on specified model
+    client = chromadb.PersistentClient(path=db_path)
+    
+    # Create embedding function
     embedding_func = create_embedding_function(embedding_model)
     
-    # Create a collection for each company
-    companies = {}
-    stats = {
-        "total_files": 0,
-        "total_chunks": 0,
-        "processed_files": 0,
-        "error_files": 0
-    }
-    
-    # Get all text files
-    text_files = []
+    # Get all report files
+    report_files = []
     for root, _, files in os.walk(text_dir):
         for file in files:
             if file.endswith('.txt'):
-                text_files.append(os.path.join(root, file))
+                report_files.append(os.path.join(root, file))
     
-    stats["total_files"] = len(text_files)
+    # Process each report
+    stats = {
+        'total_files': len(report_files),
+        'total_chunks': 0,
+        'processed_files': 0,
+        'error_files': 0
+    }
     
-    # Process each text file
-    for file_path in tqdm(text_files, desc="Processing reports"):
+    for file_path in tqdm(report_files, desc="Processing reports"):
         try:
             # Extract company code and year from filename
-            filename = os.path.basename(file_path)
-            parts = filename.split('_')
+            file_name = os.path.basename(file_path)
+            company_code = file_name.split('_')[0]
+            year = file_name.split('_')[1]
             
-            if len(parts) < 2:
-                logger.warning(f"Invalid filename format: {filename}")
-                stats["error_files"] += 1
-                continue
-            
-            company_code = parts[0]
-            year = parts[1] if len(parts) > 1 and parts[1].isdigit() else "unknown"
-            
-            # Load report text
-            text = load_report_text(file_path)
-            
-            if text is None or len(text) < 100:  # Skip if text is too short
-                logger.warning(f"Empty or too short text in {file_path}")
-                stats["error_files"] += 1
-                continue
-            
-            # Split text into chunks
-            chunks = split_text_into_chunks(
-                text=text,
-                chunk_size=chunk_size,
-                chunk_overlap=chunk_overlap
-            )
-            
-            if not chunks:
-                logger.warning(f"No chunks generated for {file_path}")
-                stats["error_files"] += 1
-                continue
-            
-            # Update statistics
-            stats["total_chunks"] += len(chunks)
-            
-            # Create or get collection for this company
+            # Create collection name
             collection_name = f"company_{company_code}"
             
+            # Get or create collection
             try:
                 collection = client.get_collection(name=collection_name, embedding_function=embedding_func)
                 logger.info(f"Using existing collection for {company_code}")
-            except Exception:
+            except:
                 collection = client.create_collection(name=collection_name, embedding_function=embedding_func)
                 logger.info(f"Created new collection for {company_code}")
             
-            # Prepare chunks for insertion
-            ids = [f"{company_code}_{year}_{i}" for i in range(len(chunks))]
-            metadatas = [{
-                "company_code": company_code,
-                "year": year,
-                "chunk_index": i,
-                "source_file": file_path,
-            } for i in range(len(chunks))]
+            # Load and split text
+            text = load_report_text(file_path)
+            if not text:
+                raise Exception("Failed to load text")
+            
+            chunks = split_text_into_chunks(text, chunk_size, chunk_overlap)
+            stats['total_chunks'] += len(chunks)
             
             # Add chunks to collection
             collection.add(
                 documents=chunks,
-                ids=ids,
-                metadatas=metadatas
+                metadatas=[{"year": year, "company_code": company_code} for _ in chunks],
+                ids=[f"{company_code}_{year}_{i}" for i in range(len(chunks))]
             )
             
-            # Add to companies dict
-            if company_code not in companies:
-                companies[company_code] = []
-            
-            companies[company_code].append({
-                "year": year,
-                "file_path": file_path,
-                "chunk_count": len(chunks)
-            })
-            
-            stats["processed_files"] += 1
+            stats['processed_files'] += 1
             
         except Exception as e:
             logger.error(f"Error processing {file_path}: {e}")
-            stats["error_files"] += 1
+            stats['error_files'] += 1
     
-    # Save companies metadata
-    companies_path = os.path.join(output_dir, "companies_metadata.json")
-    with open(companies_path, 'w', encoding='utf-8') as f:
-        json.dump(companies, f, ensure_ascii=False, indent=2)
-    
-    # Save statistics
-    stats_path = os.path.join(output_dir, "embedding_stats.json")
-    with open(stats_path, 'w', encoding='utf-8') as f:
-        json.dump(stats, f, ensure_ascii=False, indent=2)
-    
-    logger.info(f"Embedding generation complete. Stats: {stats}")
     return stats
+
 def main():
     """Main function to run the embedding generation process"""
     parser = argparse.ArgumentParser(description='Generate embeddings for annual reports')
