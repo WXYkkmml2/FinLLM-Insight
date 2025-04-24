@@ -2,36 +2,36 @@
 # -*- coding: utf-8 -*-
 
 """
-Data Acquisition Module for FinLLM-Insight
-This module downloads annual reports (10-K filings) of US listed companies from SEC.
+Format Conversion Module for FinLLM-Insight
+This module converts HTML 10-K reports to text for further processing.
 """
-
 import os
 import sys
-# Adjusting project root to be robust for Colab/Kaggle environments
-# Assumes the script is in src/data relative to the project root
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+project_root = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-import time
+
 import json
 import argparse
 import logging
-import requests
-from datetime import datetime
 from pathlib import Path
 import re
 import pandas as pd
 from tqdm import tqdm
+from bs4 import BeautifulSoup
+
+# PDF extraction libraries
+import PyPDF2
+import pdfplumber
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO, # 可以暂时改为 logging.DEBUG 查看更详细的日志
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("download_reports.log", mode='w'), # 使用 mode='w' 清空旧日志
-        logging.StreamHandler(sys.stdout) # 确保日志输出到控制台
+        logging.FileHandler("convert_formats.log"),
+        logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
@@ -39,890 +39,308 @@ logger = logging.getLogger(__name__)
 def load_config(config_path):
     """
     Load configuration from JSON file
-
+    
     Args:
         config_path (str): Path to config JSON file
-
+        
     Returns:
         dict: Configuration parameters
     """
     try:
-        # Adjust config path to be relative to the script location if needed
-        # In Colab/Kaggle, the script might be run from different directories
-        # Assume config is in a 'config' folder at the project root
-        resolved_config_path = os.path.join(project_root, config_path)
-        logger.info(f"Attempting to load config from: {resolved_config_path}")
-
-        with open(resolved_config_path, 'r', encoding='utf-8') as f:
+        with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
-        logger.info("Config loaded successfully.")
         return config
-    except FileNotFoundError:
-        logger.error(f"Config file not found at {resolved_config_path}. Please ensure config/config.json exists.")
-        raise # Re-raise the exception
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse config JSON: {e}. Please check the config file syntax.")
-        raise # Re-raise the exception
     except Exception as e:
         logger.error(f"Failed to load config: {e}")
         raise
 
-
-def download_file(url, save_path, max_retries=3, initial_delay=10):
+def extract_text_from_html(html_path):
     """
-    Download file with retry mechanism. Uses environment variables for proxy.
-
+    Extract text from HTML file (SEC 10-K report)
+    
     Args:
-        url (str): URL to download
-        save_path (str): Path to save the file
-        max_retries (int): Maximum number of retry attempts
-        initial_delay (int): Initial delay before first retry (will be multiplied on subsequent retries)
-
+        html_path (str): Path to the HTML file
+        
     Returns:
-        bool: Success status
+        str: Extracted text
     """
-    # requests 库会自动检查并使用 os.environ['HTTP_PROXY'] 和 os.environ['HTTPS_PROXY']
-    # 这些变量应该在 main 函数中根据 config 文件设置
-
-    headers = {'User-Agent': 'Mozilla/5.0'} # Standard User-Agent
-
-    for attempt in range(max_retries):
-        try:
-            logger.info(f"Attempt {attempt+1}/{max_retries}: Downloading {url}")
-
-            # requests 会自动使用环境变量中的代理
-            response = requests.get(url, headers=headers, timeout=60) # Increased timeout just in case
-
-            if response.status_code == 200:
-                # Get the content of the file
-                page_content = response.content
-
-                # Create directory if it doesn't exist (should be created by download_annual_reports, but safety check)
-                os.makedirs(os.path.dirname(save_path), exist_ok=True)
-
-                # Write the content to the local file
-                with open(save_path, "wb") as file:
-                    file.write(page_content)
-
-                # Verify file exists and is not empty (or too small)
-                if os.path.exists(save_path) and os.path.getsize(save_path) > 1024: # > 1KB check
-                    logger.info(f"Successfully downloaded: {save_path} ({os.path.getsize(save_path)/1024:.2f} KB)")
-                    return True
-                else:
-                    # File exists but is empty or too small, likely an error page content
-                    logger.warning(f"Downloaded file is empty or too small: {save_path} ({os.path.getsize(save_path)} bytes)")
-                    # Clean up the small file before retrying
-                    if os.path.exists(save_path):
-                         os.remove(save_path)
-                    # Continue to retry or fail
-
-            else:
-                logger.error(f'Response not 200. Status: {response.status_code}')
-                # Log response content for non-200 status to help debug
-                # logger.debug(f"Response content (first 500 chars): {response.text[:500]}")
-
-
-            if attempt < max_retries - 1:
-                wait_time = initial_delay * (2 ** attempt) # Exponential backoff
-                logger.info(f"Waiting {wait_time:.2f}s before retrying...")
-                time.sleep(wait_time)
-
-        except requests.exceptions.Timeout:
-             logger.error(f"Download timed out after 60s.")
-             if attempt < max_retries - 1:
-                wait_time = initial_delay * (2 ** attempt)
-                logger.info(f"Waiting {wait_time:.2f}s before retrying...")
-                time.sleep(wait_time)
-
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Download request error: {e}")
-            if attempt < max_retries - 1:
-                wait_time = initial_delay * (2 ** attempt)
-                logger.info(f"Waiting {wait_time:.2f}s before retrying...")
-                time.sleep(wait_time)
-
-        except Exception as e:
-            logger.error(f"An unexpected error occurred during download: {e}")
-            if attempt < max_retries - 1:
-                wait_time = initial_delay * (2 ** attempt)
-                logger.info(f"Waiting {wait_time:.2f}s before retrying...")
-                time.sleep(wait_time)
-
-
-    logger.error(f"Failed to download {url} after {max_retries} attempts.")
-    return False
-
-def get_stock_list(index_name="S&P500", max_stocks=50):
-    """
-    Get US stock list from specified index. Uses environment variables for proxy.
-
-    Args:
-        index_name (str): Name of the index (e.g., 'S&P500', 'S&P400', 'S&P600', 'ALL')
-        max_stocks (int): Maximum number of stocks to include (0 for all)
-
-    Returns:
-        pd.DataFrame: DataFrame containing stock symbols and names
-    """
-    logger.info(f"Retrieving stock list for {index_name}")
-
+    logger.info(f"Extracting text from HTML: {html_path}")
+    
     try:
-        # requests will automatically use the proxy environment variables here too
-        if index_name == "S&P500":
-            url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
-        elif index_name == "S&P400":
-            url = 'https://en.wikipedia.org/wiki/List_of_S%26P_400_companies'
-        elif index_name == "S%26P600" or index_name == "S&P600": # Handle both %26 and &
-            url = 'https://en.wikipedia.org/wiki/List_of_S%26P_600_companies'
-        elif index_name == "ALL":
-             logger.info("Getting combined stock list from S&P 500, 400, and 600")
-             # Need to fetch multiple pages and combine
-             sp500_df = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0][['Symbol', 'Security']]
-             sp400_df = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_400_companies')[0][['Symbol', 'Security']]
-             sp600_df = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_600_companies')[0][['Symbol', 'Security']]
-
-             stock_list = pd.concat([sp500_df, sp400_df, sp600_df], ignore_index=True)
-             stock_list.columns = ['ticker', 'company_name']
-             stock_list = stock_list.drop_duplicates(subset=['ticker'])
-
-        else:
-            logger.warning(f"Unknown index: {index_name}, defaulting to S&P500")
-            url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
-
-        if index_name != "ALL":
-             stock_list = pd.read_html(url)[0][['Symbol', 'Security']]
-             stock_list.columns = ['ticker', 'company_name']
-
-
-        # Clean ticker symbols (remove dot notation in favor of dash)
-        # Use .loc to avoid SettingWithCopyWarning
-        stock_list.loc[:, 'ticker'] = stock_list['ticker'].str.replace('.', '-', regex=False)
-
-
-        # Limit number of stocks if specified
-        if max_stocks > 0 and max_stocks < len(stock_list):
-            logger.info(f"Limiting to {max_stocks} stocks")
-            stock_list = stock_list.head(max_stocks)
-
-        logger.info(f"Successfully retrieved {len(stock_list)} stocks")
-        return stock_list
-
+        with open(html_path, 'r', encoding='utf-8', errors='replace') as f:
+            html_content = f.read()
+        
+        # Parse HTML with BeautifulSoup
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Remove script and style elements
+        for script in soup(["script", "style"]):
+            script.extract()
+        
+        # Extract text
+        text = soup.get_text(separator=' ')
+        
+        # Clean up text
+        # Replace multiple spaces with single space
+        text = re.sub(r'\s+', ' ', text)
+        # Replace multiple newlines with double newline
+        text = re.sub(r'\n\s*\n', '\n\n', text)
+        
+        return text
+    
     except Exception as e:
-        logger.error(f"Failed to retrieve stock list: {e}")
+        logger.error(f"Failed to extract text from HTML: {e}")
+        return None
 
-        # Return a minimal default list to allow code to continue
-        default_stocks = pd.DataFrame({
-            'ticker': ['AAPL', 'MSFT', 'AMZN', 'GOOGL', 'META'],
-            'company_name': ['Apple Inc.', 'Microsoft Corporation', 'Amazon.com Inc.', 'Alphabet Inc.', 'Meta Platforms Inc.']
-        })
-        logger.warning(f"Using default stock list with {len(default_stocks)} stocks due to error.")
-        return default_stocks
-
-
-def get_annual_reports(ticker, api_key, min_year=2018, max_year=None):
+def extract_text_from_pdf(pdf_path, method='pdfplumber'):
     """
-    Get annual report information for a specific stock using Financial Modeling Prep API.
-    Uses environment variables for proxy.
-
+    Extract text from PDF file (backup method)
+    
     Args:
-        ticker (str): Stock symbol
-        api_key (str): Financial Modeling Prep API key
-        min_year (int): Minimum year to fetch reports for
-        max_year (int): Maximum year to fetch reports for (None for current year)
-
+        pdf_path (str): Path to the PDF file
+        method (str): Extraction method ('pdfplumber' or 'pypdf2')
+        
     Returns:
-        pd.DataFrame: DataFrame with annual report information
+        str: Extracted text
     """
-    logger.info(f"Getting 10-K reports for {ticker}")
-
-    # Set default max year to current year if not specified
-    if max_year is None:
-        max_year = datetime.now().year
-
-    try:
-        # Construct API URL
-        fmp_url = f'https://financialmodelingprep.com/api/v3/sec_filings/{ticker}?type=10-K&page=0&apikey={api_key}'
-
-        # Hide API key in logs
-        logger.info(f"API URL: {fmp_url.replace(api_key, 'API_KEY_HIDDEN')}")
-
-        # Make the request using requests (will use proxy env vars if set)
-        response = requests.get(fmp_url, timeout=30) # Use timeout
-
-        if response.status_code != 200:
-            logger.error(f"API request failed with status code {response.status_code}")
-            # Log error response content if it might contain useful info
-            # logger.debug(f"FMP API Error Response: {response.text[:500]}")
-            return pd.DataFrame()
-
+    logger.info(f"Extracting text from PDF: {pdf_path}")
+    
+    if method == 'pdfplumber':
         try:
-            data = json.loads(response.content)
-        except json.JSONDecodeError:
-             logger.error(f"Failed to parse JSON response from FMP API.")
-             # logger.debug(f"Raw FMP API response: {response.text[:500]}")
-             return pd.DataFrame()
+            text = ""
+            with pdfplumber.open(pdf_path) as pdf:
+                for page in pdf.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n\n"
+            return text
         except Exception as e:
-            logger.error(f"Failed to process FMP API response: {e}")
-            return pd.DataFrame()
+            logger.warning(f"pdfplumber failed: {e}, trying PyPDF2")
+            method = 'pypdf2'
+    
+    if method == 'pypdf2':
+        try:
+            text = ""
+            with open(pdf_path, 'rb') as file:
+                reader = PyPDF2.PdfReader(file)
+                num_pages = len(reader.pages)
+                
+                for i in range(num_pages):
+                    page = reader.pages[i]
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n\n"
+            return text
+        except Exception as e:
+            logger.error(f"Failed to extract text with PyPDF2: {e}")
+            raise
+    
+    raise ValueError(f"Unsupported method: {method}")
 
-
-        if not data:
-            logger.warning(f"No data returned for {ticker} from FMP API.")
-            return pd.DataFrame()
-
-        logger.info(f"FMP API returned {len(data)} filings for {ticker}.")
-
-        # Process and filter results
-        reports = []
-
-        for report in data:
-            filing_type = report.get('type', '')
-
-            # Only process 10-K filings
-            if not filing_type.lower() in ['10-k', '10k']:
-                # logger.debug(f"Skipping filing type: {filing_type}") # Optional: log skipped types
-                continue
-
-            date_string = report.get('fillingDate', '')
-            if not date_string or len(date_string) < 4:
-                logger.warning(f"Skipping 10-K report with missing/invalid fillingDate for {ticker}: {date_string}")
-                continue
-
-            # Extract year from filing date
-            try:
-                 year = int(date_string[:4])
-            except ValueError:
-                 logger.warning(f"Skipping 10-K report with invalid year format for {ticker}: {date_string}")
-                 continue
-
-
-            # Skip if too old or too new
-            if year < min_year or (max_year is not None and year > max_year):
-                # logger.debug(f"Skipping report for {ticker} from year {year} (outside {min_year}-{max_year or 'current'})") # Optional: log skipped years
-                continue
-
-            link = report.get('finalLink', '')
-            if not link:
-                logger.warning(f"No finalLink found for 10-K report for {ticker} from year {year}.")
-                continue
-
-            # Check if the link is to the expected SEC domain
-            if 'sec.gov/Archives/edgar/data/' not in link:
-                 logger.warning(f"Final link does not appear to be a standard SEC EDGAR link for {ticker} year {year}: {link}")
-                 # Decide whether to skip or try downloading anyway. Let's try anyway for now.
-                 # continue # Uncomment this line to skip non-standard SEC links
-
-            # If we reach here, the report matches criteria
-            # logger.debug(f"Found eligible 10-K report for {ticker} year {year} with link: {link}") # Optional: debug found reports
-
-            reports.append({
-                'ticker': ticker,
-                'year': year,
-                'title': f"{ticker} {year} Annual Report (10-K)",
-                'url': link,
-                'filing_date': date_string[:10] # Store full date part
-            })
-
-
-        # Create DataFrame from collected reports
-        if reports:
-            df = pd.DataFrame(reports)
-            # Optional: Sort by year
-            df = df.sort_values(by='year').reset_index(drop=True)
-            logger.info(f"Filtered down to {len(df)} eligible 10-K reports for {ticker} in years {min_year}-{max_year or 'current'}.")
-            return df
-        else:
-            logger.warning(f"No eligible 10-K reports found for {ticker} in years {min_year}-{max_year or 'current'}.")
-            return pd.DataFrame()
-
-    except requests.exceptions.RequestException as e:
-         logger.error(f"Network error during FMP API request for {ticker}: {e}")
-         return pd.DataFrame()
-    except Exception as e:
-        logger.error(f"An unexpected error occurred getting annual reports for {ticker}: {e}", exc_info=True)
-        return pd.DataFrame()
-
-
-def download_annual_reports(stock_list, save_dir, api_key, min_year=2018, max_year=None, delay=60, max_stocks=None):
+def preprocess_10k_text(text):
     """
-    Download annual reports for the given stock list.
-
+    Preprocess 10-K report text
+    - Remove excessive whitespace
+    - Clean up special characters
+    - Extract meaningful sections
+    
     Args:
-        stock_list (pd.DataFrame): DataFrame with stock codes and names
-        save_dir (str): Directory to save downloaded reports
-        api_key (str): Financial Modeling Prep API key
-        min_year (int): Minimum year for reports to download
-        max_year (int): Maximum year for reports to download (default: current year)
-        delay (int): Delay in seconds to wait *between processing each report*.
-                     This is the main delay to avoid hitting SEC too fast.
-        max_stocks (int): Maximum number of stocks to process
-
+        text (str): Original text
+        
     Returns:
-        pd.DataFrame: DataFrame with download results
+        str: Preprocessed text
     """
-    # Create save directory if it doesn't exist
-    # Adjust save_dir to be relative to project_root
-    resolved_save_dir = os.path.join(project_root, save_dir)
-    os.makedirs(resolved_save_dir, exist_ok=True)
-    logger.info(f"Saving reports to: {resolved_save_dir}")
+    # Remove excessive whitespace
+    text = re.sub(r'\s+', ' ', text)
+    
+    # Remove special characters that aren't useful
+    text = re.sub(r'[^\w\s\.\,\;\:\-\(\)\[\]\{\}\"\'\$\%\&\@\!\?\/\\\|]', '', text)
+    
+    # Look for common 10-K sections and highlight them
+    important_sections = [
+        "Business",
+        "Risk Factors", 
+        "Management's Discussion and Analysis",
+        "Financial Statements",
+        "Controls and Procedures",
+        "Executive Officers",
+        "Management",
+        "Corporate Governance",
+        "Executive Compensation",
+        "Security Ownership",
+        "Related Party Transactions"
+    ]
+    
+    for section in important_sections:
+        # Look for section headers using regex
+        pattern = r'(Item\s+\d+[A-Z]?\s*[.-]\s*' + section + r')'
+        matches = re.finditer(pattern, text, re.IGNORECASE)
+        
+        # Add section markers
+        for match in matches:
+            start_pos = match.start()
+            if start_pos > 0:
+                # Insert a section marker
+                text = text[:start_pos] + "\n\n=== " + match.group(1).upper() + " ===\n\n" + text[start_pos + len(match.group(1)):]
+    
+    # Strip excessive line breaks
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    return text.strip()
 
-
-    # Set max_year to current year if not specified
-    if max_year is None:
-        max_year = datetime.now().year
-
-    # Create subdirectory for each year within the save_dir
-    years_range = list(range(min_year, max_year + 1))
-    for year in years_range:
-        year_dir = os.path.join(resolved_save_dir, str(year))
-        os.makedirs(year_dir, exist_ok=True)
-
-
-    # Limit number of stocks if specified (handled in get_stock_list, but double-check here)
-    # if max_stocks is handled in get_stock_list, this might not be needed here
-    # if max_stocks and max_stocks < len(stock_list):
-    #     logger.info(f"Limiting processing to {max_stocks} stocks")
-    #     stock_list = stock_list.head(max_stocks)
-
-
+def process_report_files(input_dir, output_dir, years=None, overwrite=False, file_type='html'):
+    """
+    Process report files and save as text
+    
+    Args:
+        input_dir (str): Directory containing report files
+        output_dir (str): Directory to save processed text files
+        years (list): List of years to process, or None for all
+        overwrite (bool): Whether to overwrite existing files
+        file_type (str): Type of files to process ('html' or 'pdf')
+        
+    Returns:
+        pd.DataFrame: Results of the conversion process
+    """
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Get all report files
+    report_files = []
+    
+    if years:
+        # Process specific years
+        for year in years:
+            year_dir = os.path.join(input_dir, str(year))
+            if os.path.exists(year_dir):
+                for file in os.listdir(year_dir):
+                    if file.endswith(f'.{file_type}'):
+                        report_files.append((os.path.join(year_dir, file), year))
+    else:
+        # Process all files
+        for root, _, files in os.walk(input_dir):
+            for file in files:
+                if file.endswith(f'.{file_type}'):
+                    # Extract year from directory name
+                    year = os.path.basename(root)
+                    if year.isdigit():
+                        report_files.append((os.path.join(root, file), year))
+    
     results = []
-    download_count = 0
-    failed_count = 0
-    skipped_existing = 0
-
-    # Process each stock
-    # tqdm provides the progress bar
-    for _, row in tqdm(stock_list.iterrows(), total=len(stock_list), desc="Downloading Annual Reports"):
-        ticker = row['ticker']
-        company_name = row['company_name']
-        logger.info(f"--- Processing Stock: {ticker} - {company_name} ---")
-
+    
+    # Process each report file
+    for report_path, year in tqdm(report_files, desc=f"Processing {file_type} files"):
         try:
-            # Get annual report information for this stock
-            annual_reports = get_annual_reports(ticker, api_key, min_year, max_year)
-
-            if annual_reports.empty:
-                logger.warning(f"No eligible 10-K reports found for {ticker} in the specified years.")
-                # Add 'no_reports_found' status for all years in range for this stock
-                for year in years_range:
-                     results.append({
-                         'ticker': ticker, 'company_name': company_name, 'year': year,
-                         'file_path': '', 'status': 'no_reports_found'
-                     })
-                # Still apply delay before next stock, helps pace API/SEC requests
-                logger.info(f"Waiting {delay}s before processing next stock...")
-                time.sleep(delay)
-                continue # Move to the next stock
-
-
-            # Download reports for each year found for this stock
-            # Add delay BEFORE the first download attempt for this stock/report
-            logger.info(f"Waiting {delay}s before first download attempt for {ticker}...")
-            time.sleep(delay)
-
-
-            reports_for_this_stock = annual_reports.to_dict('records') # Convert DataFrame to list of dicts
-
-            for i, report in enumerate(reports_for_this_stock):
-                year = report['year']
-                url = report['url']
-                filing_date = report['filing_date']
-
-                # Prepare file path
-                # Use resolved_save_dir
-                filename = f"{ticker}_{year}_annual_report.html"
-                year_dir = os.path.join(resolved_save_dir, str(year))
-                save_path = os.path.join(year_dir, filename)
-
-                # Check if file already exists and is not too small
-                if os.path.exists(save_path) and os.path.getsize(save_path) > 1024: # > 1KB check
-                    logger.info(f"File already exists and is likely complete: {save_path}")
-                    results.append({
-                        'ticker': ticker, 'company_name': company_name, 'year': year,
-                        'file_path': save_path, 'status': 'existing', 'filing_date': filing_date
-                    })
-                    skipped_existing += 1
-                    continue # Skip download, move to next report
-
-
-                # Download report - download_file handles retries and uses proxy env vars
-                # Pass a higher initial_delay to download_file for retries on the same URL
-                # The main pacing is controlled by time.sleep(delay) AFTER each report attempt
-                success = download_file(url, save_path, initial_delay=30) # Use a decent delay for retries
-
-                if success:
-                    logger.info(f"Successfully processed report for {ticker} {year}")
-                    results.append({
-                        'ticker': ticker, 'company_name': company_name, 'year': year,
-                        'file_path': save_path, 'status': 'downloaded', 'filing_date': filing_date
-                    })
-                    download_count += 1
-                else:
-                    logger.error(f"Failed to process report for {ticker} {year}")
-                    results.append({
-                        'ticker': ticker, 'company_name': company_name, 'year': year,
-                        'file_path': '', 'status': 'failed', 'filing_date': filing_date # No file path on failure
-                    })
-                    failed_count += 1
-
-                # Add delay BETWEEN processing each report (including retries)
-                # This is crucial for pacing requests to SEC/FMP
-                # No delay needed AFTER the very last report of the very last stock
-                if not (i == len(reports_for_this_stock) - 1 and _ == len(stock_list) - 1):
-                     logger.info(f"Waiting {delay}s before processing next report/stock...")
-                     time.sleep(delay)
-
-
-            # After processing all found reports for this stock, check for years in range that were missed
-            found_report_years_this_stock = set(annual_reports['year'])
-            for year in years_range:
-                 # Check if this year was in the desired range but no report was found/added
-                 # Avoid adding 'no_report_for_year' if the status is already 'no_reports_found', 'downloaded', 'existing', or 'failed' for this year
-                 if year not in found_report_years_this_stock:
-                     if not any(r['ticker'] == ticker and r['year'] == year for r in results):
-                         results.append({
-                             'ticker': ticker, 'company_name': company_name, 'year': year,
-                             'file_path': '', 'status': 'no_report_for_year', 'filing_date': None # No filing date if no report
-                         })
-
-
-        except Exception as e:
-            logger.error(f"An unexpected error occurred while processing stock {ticker}: {e}", exc_info=True)
-
-            # Add 'error' status for all years in range for this stock
-            for year in years_range:
+            # Create year directory in output
+            year_output_dir = os.path.join(output_dir, year)
+            os.makedirs(year_output_dir, exist_ok=True)
+            
+            # Get filename without extension
+            file_base = os.path.basename(report_path)
+            file_name = os.path.splitext(file_base)[0]
+            
+            # Output text file path
+            text_file_path = os.path.join(year_output_dir, f"{file_name}.txt")
+            
+            # Skip if file exists and overwrite is False
+            if os.path.exists(text_file_path) and not overwrite:
+                logger.info(f"Skipping existing file: {text_file_path}")
                 results.append({
-                    'ticker': ticker, 'company_name': company_name, 'year': year,
-                    'file_path': '', 'status': 'error', 'filing_date': None
+                    'report_path': report_path,
+                    'text_path': text_file_path,
+                    'year': year,
+                    'status': 'skipped'
                 })
-
-            # Still apply delay before next stock even if an error occurred
-            logger.info(f"Waiting {delay}s before processing next stock...")
-            time.sleep(delay)
-
-
+                continue
+            
+            # Extract text based on file type
+            if file_type == 'html':
+                raw_text = extract_text_from_html(report_path)
+            elif file_type == 'pdf':
+                raw_text = extract_text_from_pdf(report_path)
+            else:
+                logger.error(f"Unsupported file type: {file_type}")
+                continue
+            
+            if not raw_text:
+                logger.warning(f"Failed to extract text from {report_path}")
+                results.append({
+                    'report_path': report_path,
+                    'text_path': None,
+                    'year': year,
+                    'status': 'extraction_failed'
+                })
+                continue
+            
+            # Preprocess text
+            processed_text = preprocess_10k_text(raw_text)
+            
+            # Save processed text
+            with open(text_file_path, 'w', encoding='utf-8') as f:
+                f.write(processed_text)
+            
+            logger.info(f"Processed: {report_path} -> {text_file_path}")
+            results.append({
+                'report_path': report_path,
+                'text_path': text_file_path,
+                'year': year,
+                'status': 'success'
+            })
+            
+        except Exception as e:
+            logger.error(f"Error processing {report_path}: {e}")
+            results.append({
+                'report_path': report_path,
+                'text_path': None,
+                'year': year,
+                'status': 'error',
+                'error': str(e)
+            })
+    
     # Create results DataFrame
     results_df = pd.DataFrame(results)
-
-    # Ensure all desired years are present in results_df even if no reports were found for a stock
-    # This makes the results CSV comprehensive for the requested range
-    all_possible_combinations = pd.MultiIndex.from_product([stock_list['ticker'], years_range], names=['ticker', 'year']).to_frame(index=False)
-    results_df = pd.merge(all_possible_combinations, results_df, on=['ticker', 'year'], how='left')
-    # Fill missing info for combinations where no status was set (shouldn't happen if error handling/no_report_for_year logic is perfect, but good for robustness)
-    results_df['company_name'] = results_df.apply(lambda row: stock_list[stock_list['ticker'] == row['ticker']]['company_name'].iloc[0] if pd.isna(row['company_name']) else row['company_name'], axis=1)
-    results_df['status'] = results_df['status'].fillna('not_attempted') # Or 'no_report_for_year' if logic above misses something
-    # Reorder columns for clarity
-    results_df = results_df[['ticker', 'company_name', 'year', 'filing_date', 'file_path', 'status']]
-
-
-    # Save results to CSV relative to project_root
-    results_path = os.path.join(project_root, save_dir, 'download_results.csv')
-    try:
-        results_df.to_csv(results_path, index=False, encoding='utf-8-sig')
-        logger.info(f"Download results saved to: {results_path}")
-    except Exception as e:
-         logger.error(f"Failed to save results CSV to {results_path}: {e}")
-
-
-    # Print summary
-    if not results_df.empty:
-        logger.info("\n--- Download Summary ---")
-        status_counts = results_df['status'].value_counts()
-        for status, count in status_counts.items():
-            logger.info(f"  {status}: {count}")
-        logger.info("------------------------")
-
-    logger.info("Annual report download process finished.")
-
-    return results_df # Return the results DataFrame
-
-def download_annual_reports(stock_list, save_dir, api_key, min_year=2018, max_year=None, delay=60, max_stocks=None):
-    """
-    Download annual reports for the given stock list.
-
-    Args:
-        stock_list (pd.DataFrame): DataFrame with stock codes and names
-        save_dir (str): Directory to save downloaded reports
-        api_key (str): Financial Modeling Prep API key
-        min_year (int): Minimum year for reports to download
-        max_year (int): Maximum year for reports to download (default: current year)
-        delay (int): Delay in seconds to wait *between processing each report*.
-                     This is the main delay to avoid hitting SEC too fast.
-        max_stocks (int): Maximum number of stocks to process
-
-    Returns:
-        pd.DataFrame: DataFrame with download results
-    """
-    # Adjust save_dir to be relative to project_root
-    # project_root is defined at the top of the script
-    resolved_save_dir = os.path.join(project_root, save_dir)
-    os.makedirs(resolved_save_dir, exist_ok=True)
-    logger.info(f"Saving reports to: {resolved_save_dir}")
-
-
-    # Set max_year to current year if not specified
-    if max_year is None:
-        max_year = datetime.now().year
-
-    # Create subdirectory for each year within the save_dir
-    years_range = list(range(min_year, max_year + 1))
-    for year in years_range:
-        year_dir = os.path.join(resolved_save_dir, str(year))
-        os.makedirs(year_dir, exist_ok=True)
-
-
-    # Limit number of stocks if specified (handled in get_stock_list, but included for clarity)
-    if max_stocks is not None and max_stocks > 0 and max_stocks < len(stock_list):
-         logger.info(f"Limiting processing to {max_stocks} stocks from the list.")
-         stock_list = stock_list.head(max_stocks)
-
-
-    results = []
-    # Counters for summary
-    download_count = 0
-    failed_count = 0
-    skipped_existing = 0
-    no_reports_found_count = 0
-    no_report_for_year_count = 0
-    error_count = 0
-
-
-    # Process each stock
-    # tqdm provides the progress bar
-    for idx, row in tqdm(stock_list.iterrows(), total=len(stock_list), desc="Downloading Annual Reports"):
-        ticker = row['ticker']
-        company_name = row['company_name']
-        logger.info(f"\n--- Processing Stock ({idx + 1}/{len(stock_list)}): {ticker} - {company_name} ---")
-
-        # List to track years processed for this stock within the range
-        processed_years_this_stock = set()
-
-
-        try:
-            # Get annual report information for this stock from FMP
-            annual_reports = get_annual_reports(ticker, api_key, min_year, max_year)
-
-            # Convert DataFrame to list of dicts for easier iteration
-            reports_from_fmp = annual_reports.to_dict('records')
-
-            if not reports_from_fmp: # Check if FMP returned ANY eligible reports
-                logger.warning(f"No eligible 10-K reports found by FMP for {ticker} in the specified years.")
-                # Add 'no_reports_found' status for all years in range for this stock
-                for year in years_range:
-                     results.append({
-                         'ticker': ticker, 'company_name': company_name, 'year': year,
-                         'filing_date': None, 'file_path': '', 'status': 'no_reports_found' # Ensure filing_date is None
-                     })
-                     processed_years_this_stock.add(year) # Mark these years as processed
-                no_reports_found_count += len(years_range) # Increment count for all years in range
-                # Still apply delay before next stock, helps pace API/SEC requests
-                logger.info(f"Waiting {delay}s before processing next stock...")
-                time.sleep(delay)
-                continue # Move to the next stock
-
-
-            # Add delay BEFORE the first download attempt for this stock/report
-            # This applies even if FMP found reports
-            logger.info(f"Waiting {delay}s before first download attempt for {ticker}...")
-            time.sleep(delay)
-
-            # Download reports for each year found for this stock by FMP
-            for i, report in enumerate(reports_from_fmp):
-                year = report['year']
-                url = report['url']
-                filing_date = report['filing_date'] # Get the filing date from FMP data
-
-                processed_years_this_stock.add(year) # Mark this specific year as processed
-
-                # Prepare file path
-                # Use resolved_save_dir
-                filename = f"{ticker}_{year}_annual_report.html"
-                year_dir = os.path.join(resolved_save_dir, str(year))
-                save_path = os.path.join(year_dir, filename)
-
-                # Check if file already exists and is not too small
-                if os.path.exists(save_path) and os.path.getsize(save_path) > 1024: # > 1KB check
-                    logger.info(f"File already exists and is likely complete: {save_path}")
-                    results.append({
-                        'ticker': ticker, 'company_name': company_name, 'year': year,
-                        'filing_date': filing_date, 'file_path': save_path, 'status': 'existing' # Include filing_date
-                    })
-                    skipped_existing += 1
-                    # Apply delay even if skipping existing, helps pace
-                    logger.info(f"Waiting {delay}s before processing next report/stock...")
-                    time.sleep(delay)
-                    continue # Skip download, move to next report found by FMP
-
-
-                # Download report - download_file handles retries and uses proxy env vars
-                # Pass a decent initial_delay to download_file for retries on the same URL
-                # The main pacing BETWEEN reports is controlled by time.sleep(delay) BELOW
-                success = download_file(url, save_path, initial_delay=30) # Use a decent delay for retries within the same download attempt
-
-                if success:
-                    logger.info(f"Successfully processed report for {ticker} {year}")
-                    results.append({
-                        'ticker': ticker, 'company_name': company_name, 'year': year,
-                        'filing_date': filing_date, 'file_path': save_path, 'status': 'downloaded' # Include filing_date
-                    })
-                    download_count += 1
-                else:
-                    logger.error(f"Failed to process report for {ticker} {year}")
-                    results.append({
-                        'ticker': ticker, 'company_name': company_name, 'year': year,
-                        'filing_date': filing_date, 'file_path': '', 'status': 'failed' # Include filing_date even on failure
-                    })
-                    failed_count += 1
-
-                # Add delay BETWEEN processing each report (including retries)
-                # This is crucial for pacing requests to SEC/FMP
-                # No delay needed AFTER the very last report of the very last stock
-                # if not (i == len(reports_from_fmp) - 1 and idx == len(stock_list) - 1): # More complex check
-                logger.info(f"Waiting {delay}s before processing next report/stock...")
-                time.sleep(delay)
-
-
-            # After processing all reports found by FMP for this stock,
-            # check for years in the desired range that were NOT returned by FMP
-            for year_in_range in years_range:
-                 # If a year in the desired range was not among those found and processed by FMP
-                 # and it hasn't already been marked with a status (like 'no_reports_found' if FMP returned nothing, or 'error')
-                 if year_in_range not in processed_years_this_stock:
-                      # Check if this year has already been added with any status
-                      if not any(r['ticker'] == ticker and r['year'] == year_in_range for r in results):
-                          results.append({
-                              'ticker': ticker, 'company_name': company_name, 'year': year_in_range,
-                              'filing_date': None, 'file_path': '', 'status': 'no_report_for_year' # Ensure filing_date is None
-                          })
-                          no_report_for_year_count += 1
-
-
-        except Exception as e:
-            logger.error(f"An unexpected error occurred while processing stock {ticker}: {e}", exc_info=True)
-            error_count += 1
-
-            # Add 'error' status for all years in range for this stock
-            # Only add if no status has been added for this specific year yet
-            for year_in_range in years_range:
-                if year_in_range not in processed_years_this_stock: # Check if year was missed before error
-                     if not any(r['ticker'] == ticker and r['year'] == year_in_range for r in results): # Check if year already has a status
-                          results.append({
-                             'ticker': ticker, 'company_name': company_name, 'year': year_in_range,
-                             'filing_date': None, 'file_path': '', 'status': 'error' # Ensure filing_date is None
-                          })
-                          # No need to increment error_count again, it's counted per stock
-
-            # Still apply delay before next stock even if an error occurred
-            logger.info(f"Waiting {delay}s before processing next stock...")
-            time.sleep(delay)
-
-
-    # --- Post-processing and Results ---
-
-    # Create results DataFrame from the collected results
-    # Ensure necessary columns are present even if empty initially
-    results_df = pd.DataFrame(results)
-
-    # Ensure all requested stock/year combinations are in the results_df, filling missing with a default status if needed
-    # This is a robustness check, the logic above should ideally cover all cases
-    all_possible_combinations = pd.MultiIndex.from_product([stock_list['ticker'], years_range], names=['ticker', 'year']).to_frame(index=False)
-    results_df = pd.merge(all_possible_combinations, results_df, on=['ticker', 'year'], how='left')
-
-    # Fill missing 'company_name' and set default status for combinations not processed/accounted for
-    # This ensures the final CSV is complete
-    ticker_to_name_map = stock_list.set_index('ticker')['company_name'].to_dict()
-    results_df['company_name'] = results_df['ticker'].map(ticker_to_name_map)
-    results_df['status'] = results_df['status'].fillna('not_processed') # Default status if row wasn't added at all
-
-
-    # Ensure necessary columns exist and are in the desired order
-    # Using .loc for column reordering to prevent potential SettingWithCopyWarning if needed, though not strictly necessary here
-    final_columns = ['ticker', 'company_name', 'year', 'filing_date', 'file_path', 'status']
-    # Ensure all final_columns exist, adding with None if missing (shouldn't happen with logic above, but safety)
-    for col in final_columns:
-        if col not in results_df.columns:
-            results_df[col] = None
-    results_df = results_df[final_columns]
-
-
-    # Save results to CSV relative to project_root
-    results_path = os.path.join(resolved_save_dir, 'download_results.csv')
-    try:
-        results_df.to_csv(results_path, index=False, encoding='utf-8-sig')
-        logger.info(f"Download results saved to: {results_path}")
-    except Exception as e:
-         logger.error(f"Failed to save results CSV to {results_path}: {e}")
-
-
-    # Print summary
-    if not results_df.empty:
-        logger.info("\n--- Download Summary ---")
-        status_counts = results_df['status'].value_counts()
-        for status, count in status_counts.items():
-            logger.info(f"  {status}: {count}")
-        logger.info("------------------------")
-
-    logger.info(f"Total reports downloaded: {download_count}")
-    logger.info(f"Total existing reports skipped: {skipped_existing}")
-    logger.info(f"Total reports failed to download: {failed_count}")
-    logger.info(f"Total stocks with no reports found by FMP in range: {stock_list[stock_list['ticker'].apply(lambda t: all(r['status'] == 'no_reports_found' for r in results if r['ticker'] == t))].shape[0]}") # Count stocks where ALL years got 'no_reports_found'
-    logger.info(f"Total individual years missed by FMP but in range: {no_report_for_year_count}")
-    logger.info(f"Total stocks encountered errors: {error_count}")
-
-
-    return results_df # Return the results DataFrame
+    
+    # Save results
+    results_path = os.path.join(output_dir, 'conversion_results.csv')
+    results_df.to_csv(results_path, index=False, encoding='utf-8-sig')
+    
+    logger.info(f"Conversion complete. Results saved to {results_path}")
+    return results_df
 
 def main():
-    """Main function to run the download process"""
-    # 这个函数是脚本的主要入口，所有核心逻辑都在这里面
-    # 它包含加载配置、设置代理、获取股票列表、调用下载函数等步骤
-
-    parser = argparse.ArgumentParser(description='Download annual reports for US listed companies')
-    parser.add_argument('--config_path', type=str, default='config/config.json',
+    """Main function to run the conversion process"""
+    parser = argparse.ArgumentParser(description='Convert 10-K reports to text')
+    parser.add_argument('--config_path', type=str, default='config/config.json', 
                         help='Path to configuration file')
-    parser.add_argument('--max_stocks', type=int, default=0,
-                        help='Maximum number of stocks to process (0 for all)')
+    parser.add_argument('--overwrite', action='store_true', 
+                        help='Overwrite existing files')
+    parser.add_argument('--file_type', type=str, default='html', choices=['html', 'pdf'],
+                        help='Type of files to process (html or pdf)')
     args = parser.parse_args()
+    
+    # Load configuration
+    config = load_config(args.config_path)
+    
+    # Get directories
+    input_dir = config.get('annual_reports_html_save_directory', './data/raw/annual_reports')
+    output_dir = config.get('processed_reports_text_directory', './data/processed/text_reports')
+    
+    # Get years to process
+    min_year = config.get('min_year', 2018)
+    max_year = config.get('max_year')
+    if not max_year:
+        import datetime
+        max_year = datetime.datetime.now().year
+    years = list(range(min_year, max_year + 1))
+    
+    # Process report files
+    process_report_files(
+        input_dir=input_dir,
+        output_dir=output_dir,
+        years=years,
+        overwrite=args.overwrite,
+        file_type=args.file_type
+    )
 
-    try:
-        # Load configuration
-        logger.info("Loading configuration")
-        config = load_config(args.config_path)
-
-        # Get API key
-        api_key = config.get('financial_modelling_prep_api_key', '')
-        if not api_key:
-            logger.error("Financial Modeling Prep API key not found in config")
-            return 1
-
-        # >>> 在这里插入读取代理配置并设置环境变量的代码块 <<<
-
-        # 确保 os 库已经被导入 (在文件顶部已经有了)
-        # import os
-
-        http_proxy_url = config.get('http_proxy')
-        https_proxy_url = config.get('https_proxy')
-        # 假设代理认证信息已经包含在 config.json 中的 URL 字符串里
-        # 例如："http_proxy": "http://用户名:密码@代理地址:端口"
-
-        if http_proxy_url:
-            os.environ['HTTP_PROXY'] = http_proxy_url
-            # 可以考虑在日志中隐藏密码部分，这里为了确认是否设置，先显示部分
-            logger.info(f"Setting HTTP_PROXY to {http_proxy_url.split('@')[-1] if '@' in http_proxy_url else http_proxy_url}")
-
-        if https_proxy_url:
-            os.environ['HTTPS_PROXY'] = https_proxy_url
-            # 同样，日志中显示部分或全部，确认是否设置
-            logger.info(f"Setting HTTPS_PROXY to {https_proxy_url.split('@')[-1] if '@' in https_proxy_url else https_proxy_url}")
-
-        # >>> 插入的代码块结束 <<<
-
-
-        # Optional: Proxy test code - uncomment to enable
-        # logger.info("--- Testing Proxy Setting ---")
-        # try:
-        #     test_url = 'https://httpbin.org/ip'
-        #     logger.info(f"Attempting to fetch external IP via: {test_url}")
-        #     test_response = requests.get(test_url, timeout=10)
-        #     if test_response.status_code == 200:
-        #         external_ip_info = test_response.json()
-        #         external_ip = external_ip_info.get('origin', 'N/A')
-        #         logger.info(f"Request originated from IP: {external_ip}")
-        #         # Add a small sleep to avoid immediate next request
-        #         time.sleep(1)
-        #     else:
-        #         logger.error(f"Proxy test failed. Status code: {test_response.status_code}")
-        #         logger.error(f"Proxy test response: {test_response.text[:500]}") # Log beginning of response
-        # except requests.exceptions.RequestException as e:
-        #     logger.error(f"Error during proxy test request: {e}")
-        # finally:
-        #     logger.info("--- Proxy Test Complete ---")
-
-
-        # Get stock list
-        logger.info("Getting stock list")
-        index_name = config.get('us_stock_index', 'S&P500')
-        max_stocks = args.max_stocks if args.max_stocks > 0 else config.get('max_stocks', 50)
-        stock_list = get_stock_list(index_name, max_stocks)
-
-        if len(stock_list) == 0:
-            logger.error("Failed to get stock list")
-            return 1
-
-        # Set parameters
-        # Adjust save_dir to be relative to project_root if needed
-        save_dir = config.get('annual_reports_html_save_directory', 'data/raw/annual_reports') # Default relative path
-        min_year = config.get('min_year', 2018)
-        max_year = config.get('max_year', None)
-        # Get the main delay between reports from config
-        delay_between_reports = config.get('download_delay', 60) # Use a higher default here
-
-
-        # Download annual reports
-        logger.info(f"Starting download of annual reports for years {min_year}-{max_year or 'current'}")
-        # Pass the main delay to download_annual_reports
-        download_annual_reports(
-            stock_list=stock_list,
-            save_dir=save_dir, # Pass the potentially relative save_dir
-            api_key=api_key,
-            min_year=min_year,
-            max_year=max_year,
-            delay=delay_between_reports, # This is the main delay between reports
-            max_stocks=max_stocks
-        )
-
-        logger.info("Annual report download process finished.") # Moved this log message
-
-        return 0 # Exit code 0 for success
-
-    except Exception as e:
-        logger.error(f"An error occurred during script execution: {e}", exc_info=True) # Log traceback
-        return 1 # Exit code 1 for error
-
-
-# --- Main Execution ---
-# This block checks if the script is run directly and calls the main function
 if __name__ == "__main__":
-    # Note: The placeholder config creation was moved here from the end of main
-    # because it's part of the initial setup before main logic runs.
-
-    # Ensure config directory exists relative to the assumed project root
-    # project_root is defined at the top of the script
-    config_dir = os.path.join(project_root, 'config')
-    os.makedirs(config_dir, exist_ok=True)
-    config_path_in_project = os.path.join(config_dir, 'config.json')
-
-
-    # Create a placeholder config if it doesn't exist, to guide the user
-    # Use config_path_in_project for the check and creation
-    if not os.path.exists(config_path_in_project):
-        logger.warning(f"Default config file not found at {config_path_in_project}. Creating a placeholder.")
-        placeholder_config = {
-          "financial_modelling_prep_api_key": "YOUR_API_KEY_HERE", # <<--- IMPORTANT: Replace with your actual key
-          "us_stock_index": "S&P500",
-          "max_stocks": 5, # Set to 0 for all stocks in the index
-          "annual_reports_html_save_directory": "data/raw/annual_reports", # <<--- IMPORTANT: This is relative to the assumed project root!
-          "min_year": 2018,
-          "max_year": None, # Set to a specific year like 2023 or 2024, or None for current
-          "download_delay": 60, # <<--- IMPORTANT: Delay in seconds *between processing each report*. Set high for SEC.gov (e.g., 60+)
-          "download_file_initial_retry_delay": 10, # Delay for retries on the *same* URL within download_file
-          "http_proxy": "", # <<--- IMPORTANT: Add your proxy here, e.g., "http://user:pass@host:port"
-          "https_proxy": "" # <<--- IMPORTANT: Add your proxy here, usually the same as http_proxy
-        }
-        try:
-            with open(config_path_in_project, 'w', encoding='utf-8') as f:
-                json.dump(placeholder_config, f, indent=4)
-            logger.info(f"Placeholder config created at {config_path_in_project}. Please edit it with your API key and proxy!")
-            # Exit after creating placeholder so user edits it
-            # sys.exit(0) # Uncomment this line if you want the script to stop after creating config
-
-        except Exception as e:
-             logger.error(f"Failed to create placeholder config file: {e}")
-             # Continue execution, but config loading will likely fail
-
-    # Note: main() expects the config path relative to the project root for loading
-    # We are passing the default path 'config/config.json' to main's argument parser
-    # The load_config function resolves this path relative to the project_root
-
-    # Run the main function
-    # The proxy environment variables are set *inside* the main function after config is loaded
-    sys.exit(main()) # Call the main function to start the process
+    main()
