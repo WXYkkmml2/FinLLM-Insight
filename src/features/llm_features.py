@@ -448,7 +448,7 @@ For each question, follow the format specified in the instructions. Always inclu
         logger.error(f"Error in batch query for {company_code} {year}: {e}")
         return {key: f"Error: {str(e)}" for key in questions.keys()}
 
-def generate_features(embeddings_dir, output_dir, llm_model, embedding_model, questions_path=None, max_tokens_per_call=12000, incremental=True):
+def generate_features(embeddings_dir, output_dir, llm_model, embedding_model, questions_path=None, max_tokens_per_call=12000, incremental=True, config_path='config/config.json'):
     """
     Generate features for all companies using LLM analysis with incremental processing
     
@@ -460,10 +460,17 @@ def generate_features(embeddings_dir, output_dir, llm_model, embedding_model, qu
         questions_path (str): Path to questions file
         max_tokens_per_call (int): Maximum tokens per LLM call
         incremental (bool): Whether to skip already processed entries
-        
+        config_path (str): Path to configuration file
+
     Returns:
         pd.DataFrame: Combined features for all companies
     """
+    # Load configuration to get year range
+    config = load_config(config_path)
+    min_year = config.get('min_year', 2020) # Default to 2020 if not found
+    max_year = config.get('max_year', datetime.now().year) # Default to current year if not found
+    years_to_process = list(range(min_year, max_year + 1)) # Create list of years based on config
+
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
     
@@ -477,7 +484,8 @@ def generate_features(embeddings_dir, output_dir, llm_model, embedding_model, qu
             # Create index of company and year pairs
             for _, row in existing_df.iterrows():
                 if 'company_code' in row and 'report_year' in row:
-                    key = f"{row['company_code']}_{row['report_year']}"
+                    # Ensure year is stored as string for consistent key format if needed, but usually int is fine
+                    key = f"{row['company_code']}_{int(row['report_year'])}"
                     existing_features[key] = True
             logger.info(f"Found {len(existing_features)} existing feature entries for incremental processing")
         except Exception as e:
@@ -506,24 +514,8 @@ def generate_features(embeddings_dir, output_dir, llm_model, embedding_model, qu
         # Get collection
         collection = client.get_collection(name=collection_name, embedding_function=embedding_func)
         
-        # Get available years for this company
-        years = set()
-        results = collection.get()
-        
-        if not results or 'metadatas' not in results or not results['metadatas']:
-            logger.warning(f"No data found for company {company_code}")
-            continue
-        
-        for metadata in results['metadatas']:
-            if 'year' in metadata:
-                years.add(metadata['year'])
-        
-        if not years:
-            logger.warning(f"No year information found for company {company_code}")
-            continue
-        
-        # Process each year
-        for year in years:
+        # Process each year based on the config range
+        for year in years_to_process:
             # Check if already processed (incremental mode)
             key = f"{company_code}_{year}"
             if incremental and key in existing_features:
@@ -542,11 +534,12 @@ def generate_features(embeddings_dir, output_dir, llm_model, embedding_model, qu
             batch_questions = {k: v for k, v in questions.items()}
             
             logger.info(f"Batch querying LLM for {company_code} {year} with {len(batch_questions)} questions")
+            # Pass year as string to query_llm_batch as it expects string for ChromaDB metadata query
             batch_responses = query_llm_batch(
                 client=client,
                 embedding_func=embedding_func,
                 company_code=company_code,
-                year=year,
+                year=str(year), # Convert year to string for ChromaDB query
                 questions=batch_questions,
                 llm_model=llm_model,
                 max_tokens_per_call=max_tokens_per_call
@@ -627,7 +620,7 @@ def generate_features(embeddings_dir, output_dir, llm_model, embedding_model, qu
     logger.info(f"Generated features for {len(features_df)} reports. Saved to {features_path}")
     return features_df
 
-def generate_features_parallel(embeddings_dir, output_dir, llm_model, embedding_model, questions_path=None, max_tokens_per_call=12000, max_workers=4, incremental=True):
+def generate_features_parallel(embeddings_dir, output_dir, llm_model, embedding_model, questions_path=None, max_tokens_per_call=12000, max_workers=4, incremental=True, config_path='config/config.json'):
     """
     Generate features for all companies using LLM analysis with parallel processing
     
@@ -640,10 +633,17 @@ def generate_features_parallel(embeddings_dir, output_dir, llm_model, embedding_
         max_tokens_per_call (int): Maximum tokens per LLM call
         max_workers (int): Maximum number of worker threads
         incremental (bool): Whether to skip already processed entries
-    
+        config_path (str): Path to configuration file
+
     Returns:
         pd.DataFrame: Combined features for all companies
     """
+    # Load configuration to get year range
+    config = load_config(config_path)
+    min_year = config.get('min_year', 2020) # Default to 2020 if not found
+    max_year = config.get('max_year', datetime.now().year) # Default to current year if not found
+    years_to_process = list(range(min_year, max_year + 1)) # Create list of years based on config
+
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
     
@@ -656,8 +656,9 @@ def generate_features_parallel(embeddings_dir, output_dir, llm_model, embedding_
             existing_df = pd.read_csv(features_path, encoding='utf-8-sig')
             # Create index of company and year pairs
             for _, row in existing_df.iterrows():
-                if 'company_code' in row and 'report_year' in row:
-                    key = f"{row['company_code']}_{row['report_year']}"
+                 if 'company_code' in row and 'report_year' in row:
+                    # Ensure year is stored as string for consistent key format if needed, but usually int is fine
+                    key = f"{row['company_code']}_{int(row['report_year'])}"
                     existing_features[key] = True
             logger.info(f"Found {len(existing_features)} existing feature entries for incremental processing")
         except Exception as e:
@@ -666,112 +667,105 @@ def generate_features_parallel(embeddings_dir, output_dir, llm_model, embedding_
     # Load questions
     questions = load_questions(questions_path)
     
-    # Connect to vector database
+    # Connect to vector database (might be needed by workers)
+    # Consider initializing client/embedding_func within the worker if needed, or passing them
     client, embedding_func = connect_to_vector_db(embeddings_dir, embedding_model)
-    
+
     # Get company collections
     company_collections = get_company_collections(client)
-    
+
     if not company_collections:
         logger.error("No company collections found in vector database")
         return None
-    
+
     all_features = []
-    
+
     def process_company(collection_name):
-        """Process a single company and its reports"""
+        """Process a single company and its reports based on config years"""
         company_features = []
         company_code = collection_name.replace("company_", "")
-        
+        # Note: Reconnecting to DB within worker might be safer depending on library thread-safety
+        local_client, local_embedding_func = connect_to_vector_db(embeddings_dir, embedding_model)
+
         try:
-            # Get collection
-            collection = client.get_collection(name=collection_name, embedding_function=embedding_func)
-            
-            # Get available years for this company
-            years = set()
-            results = collection.get()
-            
-            if not results or 'metadatas' not in results or not results['metadatas']:
-                logger.warning(f"No data found for company {company_code}")
-                return []
-            
-            for metadata in results['metadatas']:
-                if 'year' in metadata:
-                    years.add(metadata['year'])
-            
-            if not years:
-                logger.warning(f"No year information found for company {company_code}")
-                return []
-            
-            # Process each year
-            for year in years:
+            # Get collection (still needed for querying)
+            try:
+                 collection = local_client.get_collection(name=collection_name, embedding_function=local_embedding_func)
+            except Exception as e:
+                 logger.error(f"Failed to get collection {collection_name} in worker: {e}")
+                 return []
+
+            # Process each year based on the config range
+            for year in years_to_process:
                 # Check if already processed (incremental mode)
                 key = f"{company_code}_{year}"
                 if incremental and key in existing_features:
-                    logger.info(f"Skipping already processed {company_code} {year}")
+                    # Log skipping only once per worker start if desired, or keep as is
+                    # logger.info(f"Worker skipping already processed {company_code} {year}")
                     continue
-                
+
                 features = {
                     "company_code": company_code,
-                    "report_year": year,
+                    "report_year": year, # Store the year being processed
                     "analysis_timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }
-                
+
                 responses = {}
-                
+
                 # Batch process all questions
                 batch_questions = {k: v for k, v in questions.items()}
-                
+
+                # Pass year as string to query_llm_batch as it expects string for ChromaDB metadata query
                 batch_responses = query_llm_batch(
-                    client=client,
-                    embedding_func=embedding_func,
+                    client=local_client,
+                    embedding_func=local_embedding_func,
                     company_code=company_code,
-                    year=year,
+                    year=str(year), # Convert year to string for ChromaDB query
                     questions=batch_questions,
                     llm_model=llm_model,
                     max_tokens_per_call=max_tokens_per_call
                 )
-                
+
                 # Process responses for each question
                 for question_key, response in batch_responses.items():
                     try:
                         # Get question details
                         question_data = questions[question_key]
                         question_type = question_data.get("type", "numeric")
-                        
+
                         # Store full response
                         responses[question_key] = response
-                        
+
                         # Extract structured data
                         if question_type == "numeric":
                             score_range = question_data.get("score_range", [1, 10])
                             score = extract_score_from_response(response, score_range)
                             features[f"{question_key}_score"] = score
-                        
+
                         elif question_type == "categorical":
                             categories = question_data.get("categories", [])
                             category = extract_category_from_response(response, categories)
                             features[f"{question_key}_category"] = category
-                    
+
                     except Exception as e:
                         logger.error(f"Error processing question {question_key} for {company_code} {year}: {e}")
-                
+
                 # Store responses in a separate file
                 responses_dir = os.path.join(output_dir, "responses")
                 os.makedirs(responses_dir, exist_ok=True)
-                
+
                 responses_file = os.path.join(responses_dir, f"{company_code}_{year}_responses.json")
                 with open(responses_file, 'w', encoding='utf-8') as f:
                     json.dump(responses, f, ensure_ascii=False, indent=2)
-                
+
                 # Add to features list
                 company_features.append(features)
-        
+
         except Exception as e:
-            logger.error(f"Error processing company {company_code}: {e}")
-        
+            logger.error(f"Error processing company {company_code} in worker: {e}")
+
         return company_features
-    
+
     # Use thread pool to process companies in parallel
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_company = {executor.submit(process_company, collection_name): collection_name 
@@ -859,7 +853,8 @@ def main():
             questions_path=args.questions_path,
             max_tokens_per_call=max_tokens_per_call,
             max_workers=args.max_workers,
-            incremental=args.incremental
+            incremental=args.incremental,
+            config_path=args.config_path
         )
     else:
         generate_features(
@@ -869,7 +864,8 @@ def main():
             embedding_model=embedding_model,
             questions_path=args.questions_path,
             max_tokens_per_call=max_tokens_per_call,
-            incremental=args.incremental
+            incremental=args.incremental,
+            config_path=args.config_path
         )
 
 if __name__ == "__main__":
