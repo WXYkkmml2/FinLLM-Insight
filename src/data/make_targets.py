@@ -174,9 +174,9 @@ def create_report_date_mapping(reports_dir):
             logger.debug(f"下载结果文件列名: {results_df.columns.tolist()}")
             
             # 定义可能的列名
-            stock_code_cols = ['stock_code', 'company_code', '股票代码', '公司代码', '代码']
-            year_cols = ['year', 'report_year', '年份', '报告年份']
-            
+
+            stock_code_cols = ['ticker', 'stock_code', 'company_code']
+            year_cols = ['year', 'report_year']
             # 确定实际使用的列名
             stock_code_col = None
             for col in stock_code_cols:
