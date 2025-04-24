@@ -13,7 +13,7 @@
     "max_stocks": 50,
     "download_delay": 2,
     "pdf_extraction_method": "pdfplumber",
-    "price_start_date": "20180101",
+    "price_start_date": "20200101",
     "price_end_date": null,
     "embedding_model": "sentence-transformers/all-mpnet-base-v2",
     "llm_model": "gpt-3.5-turbo-16k",
