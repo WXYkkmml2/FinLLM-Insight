@@ -52,7 +52,7 @@ def load_config(config_path):
         logger.error(f"Failed to load config: {e}")
         raise
 
-def download_file(url, save_path, max_retries=3, initial_delay=2):
+def download_file(url, save_path, max_retries=3, initial_delay=10):
     """
     Download file with retry mechanism
     
