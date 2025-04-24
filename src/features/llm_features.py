@@ -156,17 +156,19 @@ def load_questions(questions_path='config/questions.json'):
 
 def connect_to_vector_db(embeddings_dir, embedding_model):
     """
-    Connect to vector database
+    Connect to vector database and create embedding function
     
     Args:
-        embeddings_dir (str): Directory containing vector database
-        embedding_model (str): Name of the embedding model
+        embeddings_dir (str): Directory containing embeddings
+        embedding_model (str): Name of embedding model to use
         
     Returns:
-        chromadb.Client: ChromaDB client
+        tuple: (client, embedding_function)
     """
     try:
-        # Create embedding function
+        # Load config
+        config = load_config('config/config.json')
+        
         if embedding_model.lower() == "openai":
             # Use OpenAI's embeddings
             openai_ef = embedding_functions.OpenAIEmbeddingFunction(
@@ -177,17 +179,14 @@ def connect_to_vector_db(embeddings_dir, embedding_model):
         else:
             # Use Hugging Face models
             huggingface_ef = embedding_functions.HuggingFaceEmbeddingFunction(
-                api_key=os.environ.get("HUGGINGFACE_API_KEY", None),
+                api_key=config.get("huggingface_api_key"),
                 model_name=embedding_model
             )
             embedding_func = huggingface_ef
         
-        # Create client
+        # Create client with new API
         db_path = os.path.join(embeddings_dir, "chroma_db")
-        client = chromadb.Client(Settings(
-            chroma_db_impl="duckdb+parquet",
-            persist_directory=db_path
-        ))
+        client = chromadb.Client()
         
         return client, embedding_func
     
@@ -298,153 +297,6 @@ def extract_category_from_response(response, categories):
             return "Hold"
     
     return max_category[0]
-
-def query_llm_batch(client, embedding_func, company_code, year, questions, llm_model, max_tokens_per_call=12000):
-    """批量查询LLM针对公司报告数据的问题"""
-    try:
-        # 获取公司集合
-        collection_name = f"company_{company_code}"
-        collection = client.get_collection(name=collection_name, embedding_function=embedding_func)
-        
-        # 合并所有问题
-        combined_question = "请分析公司以下几个方面: "
-        for key, question_data in questions.items():
-            combined_question += f"\n\n{key.upper()}: {question_data['question']}"
-        
-        # 查询相关内容
-        results = collection.query(
-            query_texts=[combined_question],
-            where={"year": year} if year else None,
-            n_results=10
-        )
-        
-        if not results or not results.get('documents') or len(results['documents'][0]) == 0:
-            logger.warning(f"未找到{company_code} {year}年的报告数据")
-            return {key: f"未找到{company_code} {year}年的报告数据。" for key in questions.keys()}
-        
-        # 定义可能的元数据字段映射
-        metadata_mappings = {
-            "company_code": ["company_code", "公司代码", "股票代码", "代码"],
-            "year": ["year", "报告年份", "年份"],
-            "chunk_index": ["chunk_index", "索引", "index"],
-        }
-        
-        # 处理查询结果
-        relevant_chunks = []
-        
-        for i, doc in enumerate(results['documents'][0]):
-            # 计算相关度
-            relevance = 1.0
-            if 'distances' in results and results.get('distances')[0]:
-                relevance = 1.0 - min(results['distances'][0][i], 1.0)
-            
-            # 获取元数据
-            metadata = {}
-            if results.get('metadatas') and results['metadatas'][0]:
-                metadata = results['metadatas'][0][i]
-            
-            # 构建标准化的块信息
-            chunk_info = {
-                "content": doc,
-                "relevance": relevance,
-            }
-            
-            # 处理元数据字段，确保使用标准化的键名
-            for standard_key, possible_keys in metadata_mappings.items():
-                # 从元数据中查找字段值
-                value = None
-                for key in possible_keys:
-                    if key in metadata and metadata[key] is not None:
-                        value = metadata[key]
-                        break
-                
-                # 如果在元数据中找不到，则使用默认值
-                if value is None:
-                    if standard_key == "company_code":
-                        value = company_code
-                    elif standard_key == "year":
-                        value = year
-                    elif standard_key == "chunk_index":
-                        value = i
-                
-                chunk_info[standard_key] = value
-            
-            relevant_chunks.append(chunk_info)
-        
-
-        # Sort chunks by relevance
-        relevant_chunks = sorted(relevant_chunks, key=lambda x: x["relevance"], reverse=True)
-        
-        # Dynamically adjust text amount based on question complexity
-        max_chars = max_tokens_per_call // 2  # Rough character to token ratio
-        current_chars = 0
-        selected_chunks = []
-        
-        for chunk in relevant_chunks:
-            if current_chars + len(chunk["content"]) <= max_chars:
-                selected_chunks.append(chunk)
-                current_chars += len(chunk["content"])
-            elif not selected_chunks:  # At least include one chunk
-                selected_chunks.append(chunk)
-                break
-            else:
-                break
-        
-        # Combine relevant chunks
-        relevant_text = "\n\n".join(chunk["content"] for chunk in selected_chunks)
-        
-        # Prepare prompt
-        system_prompt = f"""You are a professional financial analyst specialized in analyzing company annual reports.
-Now, you need to analyze specific information from the annual report of company {company_code} for year {year}, and answer a specific question.
-Base your analysis only on the provided report excerpts, without using external knowledge.
-If the report excerpts don't contain enough information to answer the question, clearly indicate this limitation.
-Ensure your analysis is comprehensive, objective, and considers both positive and negative factors.
-"""
-        
-        user_prompt = f"""Below are relevant excerpts from company {company_code}'s annual report for year {year}:
-
-{relevant_text}
-
-Question: {question}
-
-Based on the provided annual report excerpts, please answer the question. Requirements:
-1. Be comprehensive, objective, and specific in your analysis
-2. If scoring is requested, provide a clear numerical score and explain your reasoning in detail
-3. If classification is requested, choose one option from the given choices and explain your reasoning
-4. Only use information from the provided report excerpts
-"""
-        
-        # Check cache before making API call
-        cache_key = f"{system_prompt}\n{user_prompt}"
-        cached_response = response_cache.get_cached_response(cache_key, llm_model)
-        
-        if cached_response:
-            logger.info(f"Using cached response for {company_code} {year} - {question[:30]}...")
-            return cached_response
-        
-        # Call LLM API
-        if "gpt" in llm_model.lower() or "openai" in llm_model.lower():
-            client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ]
-            response = call_llm_with_retry(client, llm_model, messages)
-            
-            response_text = response.choices[0].message.content
-            
-            # Cache the response
-            response_cache.cache_response(cache_key, llm_model, response_text)
-            
-            return response_text
-        
-        # Add support for other LLM APIs as needed
-        else:
-            raise ValueError(f"Unsupported LLM model: {llm_model}")
-    
-    except Exception as e:
-        logger.error(f"Error querying LLM for {company_code} {year}: {e}")
-        return f"LLM query error: {str(e)}"
 
 def query_llm_batch(client, embedding_func, company_code, year, questions, llm_model, max_tokens_per_call=12000):
     """
@@ -825,7 +677,6 @@ def generate_features_parallel(embeddings_dir, output_dir, llm_model, embedding_
     questions = load_questions(questions_path)
     
     # Connect to vector database
-
     client, embedding_func = connect_to_vector_db(embeddings_dir, embedding_model)
     
     # Get company collections
