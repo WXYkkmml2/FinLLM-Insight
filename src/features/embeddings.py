@@ -204,12 +204,11 @@ def create_embedding_function(embedding_model):
         embedding_function: Function to generate embeddings
     """
     try:
-        # Use ChromaDB's built-in HuggingFaceEmbeddingFunction
+        # Use ChromaDB's built-in SentenceTransformerEmbeddingFunction
         from chromadb.utils import embedding_functions
         
         logger.info(f"Creating embedding function for model {embedding_model}")
-        embedding_func = embedding_functions.HuggingFaceEmbeddingFunction(
-            api_key=os.environ.get("HUGGINGFACE_API_KEY"),
+        embedding_func = embedding_functions.SentenceTransformerEmbeddingFunction(
             model_name=embedding_model
         )
         logger.info("Embedding function created successfully")
@@ -257,6 +256,22 @@ def process_reports(text_dir, output_dir, embedding_model, chunk_size=1000, chun
         'skipped_files': 0
     }
     
+    # Get unique company codes
+    company_codes = set()
+    for file_path in report_files:
+        file_name = os.path.basename(file_path)
+        company_code = file_name.split('_')[0]
+        company_codes.add(company_code)
+    
+    # Delete existing collections
+    for company_code in company_codes:
+        collection_name = f"company_{company_code}"
+        try:
+            client.delete_collection(collection_name)
+            logger.info(f"Deleted existing collection for {company_code}")
+        except Exception as e:
+            logger.warning(f"Could not delete collection for {company_code}: {e}")
+    
     for file_path in tqdm(report_files, desc="Processing reports"):
         try:
             # Extract company code and year from filename
@@ -267,23 +282,8 @@ def process_reports(text_dir, output_dir, embedding_model, chunk_size=1000, chun
             # Create collection name
             collection_name = f"company_{company_code}"
             
-            # Check if collection exists
-            collections = client.list_collections()
-            collection_exists = any(c.name == collection_name for c in collections)
-            
-            if collection_exists:
-                logger.info(f"Using existing collection for {company_code}")
-                collection = client.get_collection(name=collection_name, embedding_function=embedding_func)
-            else:
-                logger.info(f"Creating new collection for {company_code}")
-                collection = client.create_collection(name=collection_name, embedding_function=embedding_func)
-            
-            # Check if document for this year already exists
-            existing_docs = collection.get(where={"year": year})
-            if existing_docs and len(existing_docs['ids']) > 0:
-                logger.info(f"Skipping {company_code} {year} - already processed")
-                stats['skipped_files'] += 1
-                continue
+            # Create new collection
+            collection = client.create_collection(name=collection_name, embedding_function=embedding_func)
             
             # Load and split text
             text = load_report_text(file_path)
