@@ -9,7 +9,7 @@
     "us_stock_index": "S&P500",
     "financial_modelling_prep_api_key": "nideapi",
     "huggingface_api_key": "your_huggingface_api_key_here",
-    "min_year": 2020,
+    "min_year": 2024,
     "max_year": 2025,
     "max_stocks": 50,
     "download_delay": 2,
