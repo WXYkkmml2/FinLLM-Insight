@@ -204,24 +204,16 @@ def create_embedding_function(embedding_model):
         embedding_function: Function to generate embeddings
     """
     try:
-        # Use local embedding model
-        from sentence_transformers import SentenceTransformer
+        # Use ChromaDB's built-in SentenceTransformerEmbeddingFunction
+        from chromadb.utils import embedding_functions
         
-        # Create model directory if it doesn't exist
-        model_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "models")
-        os.makedirs(model_dir, exist_ok=True)
+        logger.info(f"Creating embedding function for model {embedding_model}")
+        embedding_func = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name=embedding_model
+        )
+        logger.info("Embedding function created successfully")
         
-        # Download and load model
-        logger.info(f"Downloading model {embedding_model}...")
-        model = SentenceTransformer(embedding_model, cache_folder=model_dir)
-        logger.info("Model downloaded successfully")
-        
-        # Create embedding function
-        def embedding_function(texts):
-            embeddings = model.encode(texts)
-            return embeddings.tolist()
-        
-        return embedding_function
+        return embedding_func
         
     except Exception as e:
         logger.error(f"Failed to create embedding function: {e}")
@@ -274,21 +266,23 @@ def process_reports(text_dir, output_dir, embedding_model, chunk_size=1000, chun
             # Create collection name
             collection_name = f"company_{company_code}"
             
-            # Get or create collection
-            try:
-                collection = client.get_collection(name=collection_name, embedding_function=embedding_func)
+            # Check if collection exists
+            collections = client.list_collections()
+            collection_exists = any(c.name == collection_name for c in collections)
+            
+            if collection_exists:
                 logger.info(f"Using existing collection for {company_code}")
-                
-                # Check if document for this year already exists
-                existing_docs = collection.get(where={"year": year})
-                if existing_docs and len(existing_docs['ids']) > 0:
-                    logger.info(f"Skipping {company_code} {year} - already processed")
-                    stats['skipped_files'] += 1
-                    continue
-                    
-            except Exception as e:
+                collection = client.get_collection(name=collection_name, embedding_function=embedding_func)
+            else:
                 logger.info(f"Creating new collection for {company_code}")
                 collection = client.create_collection(name=collection_name, embedding_function=embedding_func)
+            
+            # Check if document for this year already exists
+            existing_docs = collection.get(where={"year": year})
+            if existing_docs and len(existing_docs['ids']) > 0:
+                logger.info(f"Skipping {company_code} {year} - already processed")
+                stats['skipped_files'] += 1
+                continue
             
             # Load and split text
             text = load_report_text(file_path)
@@ -336,6 +330,9 @@ def main():
         logger.info("Please set your Hugging Face API key using:")
         logger.info("export HUGGINGFACE_API_KEY='your_api_key_here'")
         sys.exit(1)
+    
+    # Set ChromaDB Hugging Face API key
+    os.environ["CHROMA_HUGGINGFACE_API_KEY"] = os.environ["HUGGINGFACE_API_KEY"]
     
     # Process reports using synchronous method
     try:
