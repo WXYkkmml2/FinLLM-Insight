@@ -183,6 +183,23 @@ def preprocess_data(df, target_column, test_size=0.2, random_state=42):
             X = X[~missing_mask]
             y = y[~missing_mask]
         
+        # Encode categorical features
+        if categorical_features:
+            logger.info(f"Encoding {len(categorical_features)} categorical features")
+            encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=False)
+            encoded_features = encoder.fit_transform(X[categorical_features])
+            encoded_feature_names = encoder.get_feature_names_out(categorical_features)
+            
+            # Create DataFrame with encoded features
+            encoded_df = pd.DataFrame(encoded_features, columns=encoded_feature_names, index=X.index)
+            
+            # Drop original categorical columns and add encoded ones
+            X = X.drop(columns=categorical_features)
+            X = pd.concat([X, encoded_df], axis=1)
+            
+            # Update feature columns list
+            feature_columns = numeric_features + list(encoded_feature_names)
+        
         # Split data
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=test_size, random_state=random_state
