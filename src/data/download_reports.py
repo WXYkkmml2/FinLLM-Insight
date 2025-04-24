@@ -5,6 +5,7 @@
 Data Acquisition Module for FinLLM-Insight
 This module downloads annual reports (10-K filings) of US listed companies from SEC.
 """
+
 import os
 import sys
 project_root = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -64,61 +65,43 @@ def download_file(url, save_path, max_retries=3, initial_delay=2):
     Returns:
         bool: Success status
     """
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    }
+    headers = {'User-Agent': 'Mozilla/5.0'}
     
     for attempt in range(max_retries):
         try:
-            # Stream the download to handle large files
-            with requests.get(url, headers=headers, stream=True, timeout=30) as r:
-                r.raise_for_status()
-                
-                # Get file size if available
-                file_size = int(r.headers.get('Content-Length', 0))
-                desc = f"Downloading {os.path.basename(save_path)}"
-                
-                # Save the file
-                with open(save_path, 'wb') as f:
-                    chunk_size = 8192
-                    
-                    if file_size > 0:
-                        # Use tqdm for progress bar if file size is known
-                        with tqdm(total=file_size, unit='B', unit_scale=True, desc=desc) as pbar:
-                            for chunk in r.iter_content(chunk_size=chunk_size):
-                                if chunk:
-                                    f.write(chunk)
-                                    pbar.update(len(chunk))
-                    else:
-                        # Simple download without progress bar
-                        for chunk in r.iter_content(chunk_size=chunk_size):
-                            if chunk:
-                                f.write(chunk)
+            logger.info(f"Downloading attempt {attempt+1}: {url}")
+            response = requests.get(url, headers=headers, timeout=30)
             
-            # Verify file was downloaded successfully
-            if os.path.exists(save_path) and os.path.getsize(save_path) > 0:
-                logger.info(f"Successfully downloaded: {save_path}")
-                return True
-            else:
-                logger.warning(f"Downloaded file is empty: {save_path}")
-                if attempt < max_retries - 1:
-                    continue
-                return False
+            if response.status_code == 200:
+                # Get the content of the file
+                page_content = response.content
                 
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"Download attempt {attempt+1}/{max_retries} failed: {e}")
+                # Write the content to the local file
+                with open(save_path, "wb") as file:
+                    file.write(page_content)
+                
+                if os.path.exists(save_path) and os.path.getsize(save_path) > 0:
+                    logger.info(f"Successfully downloaded: {save_path} ({os.path.getsize(save_path)/1024:.2f} KB)")
+                    return True
+                else:
+                    logger.warning(f"Downloaded file is empty: {save_path}")
+            else:
+                logger.error(f'Response not 200. Status: {response.status_code}')
+                
+            if attempt < max_retries - 1:
+                wait_time = initial_delay * (2 ** attempt)
+                logger.info(f"Waiting {wait_time}s before retrying...")
+                time.sleep(wait_time)
+        
+        except Exception as e:
+            logger.error(f"Download error: {str(e)}")
             
             if attempt < max_retries - 1:
                 wait_time = initial_delay * (2 ** attempt)
                 logger.info(f"Waiting {wait_time}s before retrying...")
                 time.sleep(wait_time)
-            else:
-                logger.error(f"Failed to download after {max_retries} attempts: {url}")
-                return False
     
     return False
-
 def get_stock_list(index_name="S&P500", max_stocks=50):
     """
     Get US stock list from specified index
@@ -211,50 +194,30 @@ def get_annual_reports(ticker, api_key, min_year=2018, max_year=None):
     if max_year is None:
         max_year = datetime.now().year
     
-    # Create year range
-    years = list(range(min_year, max_year + 1))
-    
     try:
-        # Construct API URL
-        fmp_url = f"https://financialmodelingprep.com/api/v3/sec_filings/{ticker}?type=10-K&page=0&apikey={api_key}"
+        # Construct API URL - using original GPT-InvestAR format
+        fmp_url = f'https://financialmodelingprep.com/api/v3/sec_filings/{ticker}?type=10-K&page=0&apikey={api_key}'
         
-        # Make API request with verbose logging
-        logger.info(f"Making API request to: {fmp_url.replace(api_key, 'API_KEY_HIDDEN')}")
+        logger.info(f"API URL: {fmp_url.replace(api_key, 'API_KEY_HIDDEN')}")
         
-        # Set proper headers
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'application/json',
-        }
+        # Make simple direct request
+        response = requests.get(fmp_url)
         
-        response = requests.get(fmp_url, headers=headers, timeout=15)
-        
-        # Check status code
         if response.status_code != 200:
-            logger.error(f"API request failed with status code {response.status_code}: {response.text}")
+            logger.error(f"API request failed with status code {response.status_code}")
             return pd.DataFrame()
         
-        # Log response size
-        logger.info(f"Received response of size {len(response.content)} bytes")
-        
-        # Try to parse as JSON
         try:
-            data = response.json()
-        except ValueError as e:
-            logger.error(f"Failed to parse JSON response: {e}")
-            logger.error(f"Response content: {response.text[:500]}...")
-            return pd.DataFrame()
-            
-        # Check if data is empty or not a list
-        if not data:
-            logger.warning(f"Empty data returned for {ticker}")
+            data = json.loads(response.content)
+        except Exception as e:
+            logger.error(f"Failed to parse JSON: {e}")
             return pd.DataFrame()
         
-        if not isinstance(data, list):
-            logger.error(f"Unexpected response format: {data}")
+        if not data:
+            logger.warning(f"No data returned for {ticker}")
             return pd.DataFrame()
             
-        logger.info(f"Retrieved {len(data)} filings for {ticker}")
+        logger.info(f"Found {len(data)} filings for {ticker}")
         
         # Process results
         reports = []
@@ -262,8 +225,8 @@ def get_annual_reports(ticker, api_key, min_year=2018, max_year=None):
         for report in data:
             filing_type = report.get('type', '')
             
-            # Only process 10-K filings
-            if filing_type.lower() != '10-k':
+            # Only process 10-K filings (using original logic)
+            if not ((filing_type.lower() == '10-k') or (filing_type.lower() == '10k')):
                 continue
             
             date_string = report.get('fillingDate', '')
@@ -272,28 +235,23 @@ def get_annual_reports(ticker, api_key, min_year=2018, max_year=None):
                 
             # Extract year from filing date
             date = date_string[:10]
-            try:
-                year = int(date_string[:4])
-                
-                # Skip if not in requested years
-                if year < min_year or year > max_year:
-                    continue
-                
-                link = report.get('finalLink', '')
-                if not link:
-                    logger.warning(f"Missing final link for {ticker} {year}")
-                    continue
-                
-                reports.append({
-                    'ticker': ticker,
-                    'year': year,
-                    'title': f"{ticker} {year} Annual Report (10-K)",
-                    'url': link,
-                    'filing_date': date
-                })
-            except (ValueError, IndexError) as e:
-                logger.warning(f"Invalid date format: {date_string}, error: {e}")
+            year = int(date_string[:4])
+            
+            # Skip if too old
+            if year < min_year or (max_year and year > max_year):
                 continue
+            
+            link = report.get('finalLink', '')
+            if not link:
+                continue
+            
+            reports.append({
+                'ticker': ticker,
+                'year': year,
+                'title': f"{ticker} {year} Annual Report (10-K)",
+                'url': link,
+                'filing_date': date
+            })
         
         # Create DataFrame
         if reports:
@@ -304,13 +262,10 @@ def get_annual_reports(ticker, api_key, min_year=2018, max_year=None):
             logger.warning(f"No 10-K reports found for {ticker}")
             return pd.DataFrame()
     
-    except requests.exceptions.RequestException as e:
-        logger.error(f"API request failed for {ticker}: {e}")
-        return pd.DataFrame()
-    
     except Exception as e:
         logger.error(f"Error getting annual reports for {ticker}: {e}")
         return pd.DataFrame()
+        
 def download_annual_reports(stock_list, save_dir, api_key, min_year=2018, max_year=None, delay=2, max_stocks=None):
     """
     Download annual reports for the given stock list
