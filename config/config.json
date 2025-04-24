@@ -5,12 +5,15 @@
     "embeddings_directory": "./data/processed/embeddings",
     "features_directory": "./data/processed/features",
     "models_directory": "./models",
+    "predictions_directory": "./predictions",
     "us_stock_index": "S&P500",
     "financial_modelling_prep_api_key": "",
     "min_year": 2018,
     "max_year": 2023,
+    "max_stocks": 50,
     "download_delay": 2,
     "pdf_extraction_method": "pdfplumber",
+    "file_type": "html",
     "price_start_date": "20180101",
     "price_end_date": null,
     "embedding_model": "sentence-transformers/all-mpnet-base-v2",
@@ -19,5 +22,7 @@
     "chunk_overlap": 200,
     "max_tokens_per_call": 12000,
     "return_windows": [5, 20, 60, 120],
-    "target_window": 60
+    "target_window": 60,
+    "model_type": "regression",
+    "model_name": "random_forest"
 }
