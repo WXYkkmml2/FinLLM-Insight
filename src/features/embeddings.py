@@ -5,6 +5,17 @@
 Embeddings Generation Module for FinLLM-Insight
 This module creates embeddings for annual report text and stores them in a vector database.
 """
+# 确保导入了 chromadb 库
+import chromadb
+# 确保导入了 Settings 类，虽然在新方式中创建客户端时可能不再直接用它作为参数，
+# 但脚本其他地方可能还需要 Settings
+from chromadb.config import Settings
+import logging # 确保 logging 库被导入
+# 确保 logger 对象在脚本的日志配置部分被正确定义了
+# logger = logging.getLogger(__name__)
+
+import asyncio
+from chromadb.utils import embedding_functions
 import os
 import sys
 project_root = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -19,7 +30,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-import asyncio
+#import asyncio
 
 # Text processing and chunking
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -106,26 +117,81 @@ def split_text_into_chunks(text, chunk_size=1000, chunk_overlap=200):
         logger.error(f"Failed to split text: {e}")
         return []
 
-async def create_chroma_client(persist_directory):
+async def create_chroma_client(db_path: str):
     """
-    Create a ChromaDB async client
-    
+    Creates and returns a ChromaDB async client for version 1.0.6.
+
     Args:
-        persist_directory (str): Directory to persist the database
-        
+        db_path: The path to the ChromaDB persistent storage.
+
     Returns:
-        chromadb.AsyncClient: ChromaDB async client
+        A ChromaDB AsyncClient instance (based on likely v1.0.6 API).
     """
+    logger.info(f"Creating ChromaDB client at: {db_path}")
+
+    # >>> 尝试导入 Async Client 类，适配 v1.0.6 API 可能性 <<<
+    ChromaAsyncClientClass = None # Initialize
+    import_success = False
+    tried_paths = []
+
+    # 尝试 1: 尝试从 chromadb.api.async_client 导入 AsyncClient
     try:
-        client = chromadb.AsyncClient(Settings(
-            chroma_db_impl="duckdb+parquet",
-            persist_directory=persist_directory
-        ))
+        from chromadb.api.async_client import AsyncClient as ChromaAsyncClientClass_Attempt1
+        ChromaAsyncClientClass = ChromaAsyncClientClass_Attempt1
+        logger.info("Attempt 1: Successfully imported AsyncClient from chromadb.api.async_client")
+        import_success = True
+    except ImportError:
+        tried_paths.append("chromadb.api.async_client.AsyncClient")
+        logger.warning("Attempt 1 failed: AsyncClient not found in chromadb.api.async_client, trying other paths.")
+
+    if not import_success:
+        # 尝试 2: 尝试从 chromadb 顶层导入 AsyncClient (虽然第一错误日志曾提示没有，但代码可能混淆了)
+        try:
+            from chromadb import AsyncClient as ChromaAsyncClientClass_Attempt2
+            ChromaAsyncClientClass = ChromaAsyncClientClass_Attempt2
+            logger.info("Attempt 2: Successfully imported AsyncClient from chromadb (top level)")
+            import_success = True
+        except ImportError:
+            tried_paths.append("chromadb.AsyncClient (top level)")
+            logger.warning("Attempt 2 failed: AsyncClient not found directly in chromadb, trying other paths.")
+
+    if not import_success:
+         # 尝试 3: 尝试从 chromadb.api 导入 AsyncClient
+        try:
+            from chromadb.api import AsyncClient as ChromaAsyncClientClass_Attempt3
+            ChromaAsyncClientClass = ChromaAsyncClientClass_Attempt3
+            logger.info("Attempt 3: Successfully imported AsyncClient from chromadb.api")
+            import_success = True
+        except ImportError:
+            tried_paths.append("chromadb.api.AsyncClient")
+            # 没有更多常见的异步客户端路径了
+
+    if not import_success or ChromaAsyncClientClass is None:
+         logger.error(f"AsyncClient (or equivalent) class not found in common locations for chromadb 1.0.6 after trying: {', '.join(tried_paths)}")
+         logger.error("Please check the official chromadb documentation for version 1.0.6 (docs.trychroma.com) regarding async client initialization.")
+         # 报告最终的导入错误
+         raise ImportError(f"Could not find a suitable AsyncClient class in chromadb version 1.0.6 after trying: {', '.join(tried_paths)}")
+
+
+    # >>> 导入尝试结束 <<<
+
+    try:
+        # 使用 Settings 配置客户端
+        settings = Settings(
+            persist_directory=db_path,
+            is_persistent=True
+        )
+        client = ChromaAsyncClientClass(settings=settings)
+        logger.info("ChromaDB client created successfully using Settings")
         return client
-    
+
     except Exception as e:
-        logger.error(f"Failed to create ChromaDB async client: {e}")
-        raise
+        # 如果 AsyncClient 不接受 path 参数，或者创建时发生其他错误，会捕获到这里
+        logger.error(f"Failed to create ChromaDB client instance with path={db_path}: {e}", exc_info=True)
+        logger.error("It's possible AsyncClient in version 1.0.6 does not take a 'path' argument for local persistence.")
+        logger.error("Please verify the correct client creation method for local persistence in chromadb 1.0.6 documentation.")
+        raise # Re-raise the exception
+  
 
 def create_embedding_function(embedding_model):
     """
@@ -159,7 +225,7 @@ def create_embedding_function(embedding_model):
 
 async def process_reports(text_dir, output_dir, embedding_model, chunk_size=1000, chunk_overlap=200):
     """
-    Process all reports and generate embeddings using async methods
+    Process all reports and generate embeddings using synchronous methods
     
     Args:
         text_dir (str): Directory containing text reports
@@ -176,8 +242,10 @@ async def process_reports(text_dir, output_dir, embedding_model, chunk_size=1000
     
     # Create vector database client
     db_path = os.path.join(output_dir, "chroma_db")
+
     client = await create_chroma_client(db_path)
-    
+    #client = create_chroma_client(db_path)
+
     # Create embedding function based on specified model
     embedding_func = create_embedding_function(embedding_model)
     
@@ -241,10 +309,10 @@ async def process_reports(text_dir, output_dir, embedding_model, chunk_size=1000
             collection_name = f"company_{company_code}"
             
             try:
-                collection = await client.get_collection(name=collection_name, embedding_function=embedding_func)
+                collection = client.get_collection(name=collection_name, embedding_function=embedding_func)
                 logger.info(f"Using existing collection for {company_code}")
             except Exception:
-                collection = await client.create_collection(name=collection_name, embedding_function=embedding_func)
+                collection = client.create_collection(name=collection_name, embedding_function=embedding_func)
                 logger.info(f"Created new collection for {company_code}")
             
             # Prepare chunks for insertion
@@ -257,7 +325,7 @@ async def process_reports(text_dir, output_dir, embedding_model, chunk_size=1000
             } for i in range(len(chunks))]
             
             # Add chunks to collection
-            await collection.add(
+            collection.add(
                 documents=chunks,
                 ids=ids,
                 metadatas=metadatas
@@ -279,9 +347,6 @@ async def process_reports(text_dir, output_dir, embedding_model, chunk_size=1000
             logger.error(f"Error processing {file_path}: {e}")
             stats["error_files"] += 1
     
-    # Persist the database
-    await client.persist()
-    
     # Save companies metadata
     companies_path = os.path.join(output_dir, "companies_metadata.json")
     with open(companies_path, 'w', encoding='utf-8') as f:
@@ -294,7 +359,6 @@ async def process_reports(text_dir, output_dir, embedding_model, chunk_size=1000
     
     logger.info(f"Embedding generation complete. Stats: {stats}")
     return stats
-
 def main():
     """Main function to run the embedding generation process"""
     parser = argparse.ArgumentParser(description='Generate embeddings for annual reports')
@@ -312,7 +376,7 @@ def main():
     chunk_size = config.get('chunk_size', 1000)
     chunk_overlap = config.get('chunk_overlap', 200)
     
-    # Process reports using asyncio
+    # Process reports using normal sync method
     asyncio.run(process_reports(
         text_dir=text_dir,
         output_dir=output_dir,
@@ -320,6 +384,5 @@ def main():
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap
     ))
-
 if __name__ == "__main__":
     main()
