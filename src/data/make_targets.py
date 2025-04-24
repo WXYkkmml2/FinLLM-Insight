@@ -284,8 +284,10 @@ def generate_targets(reports_dir, output_dir, price_start_date=None, price_end_d
         try:
             # Get price history for this stock
             price_history = get_stock_price_history(
-                stock_code=stock_code,
+
+                ticker=stock_code,
                 start_date=price_start_date,
+                
                 end_date=price_end_date
             )
             
