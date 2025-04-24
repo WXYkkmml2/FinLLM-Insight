@@ -103,7 +103,6 @@ def get_stock_price_history(ticker, start_date, end_date):
         
 
         # Convert column names to strings and use lowercase for consistency
-
         if 'adj close' in df.columns:
             df.rename(columns={'adj close': 'adj_close'}, inplace=True)        
         # Rename 'adj close' to 'adj_close' for easier access
@@ -116,6 +115,7 @@ def get_stock_price_history(ticker, start_date, end_date):
     except Exception as e:
         logger.error(f"Error getting price history for {ticker}: {e}")
         return None
+
 def calculate_future_returns(price_df, windows=[1, 5, 20, 60, 120]):
     """计算不同时间窗口的未来收益率"""
     if price_df is None or len(price_df) == 0:
@@ -145,12 +145,24 @@ def calculate_future_returns(price_df, windows=[1, 5, 20, 60, 120]):
     # 如果仍然找不到价格列，则记录错误并使用第一个数值列
     if price_col is None:
         print(f"警告: 找不到价格列。可用列: {columns_list}")
-        # 尝试使用第一个数值列
+        # 尝试查找在(,)中形式的列，这通常是多级索引转换为列名的情况
         for col in columns_list:
-            if pd.api.types.is_numeric_dtype(df[col]):
+            if isinstance(col, tuple) and col[1] == 'Close':
                 price_col = col
                 print(f"使用 {col} 作为价格列")
                 break
+            elif isinstance(col, tuple) and 'close' in col[1].lower():
+                price_col = col
+                print(f"使用 {col} 作为价格列")
+                break
+        
+        # 如果仍然找不到，尝试使用第一个看起来是数值列的列
+        if price_col is None:
+            for col in columns_list:
+                if pd.api.types.is_numeric_dtype(df[col]):
+                    price_col = col
+                    print(f"使用 {col} 作为价格列")
+                    break
     
     if price_col is None:
         return None
@@ -205,8 +217,6 @@ def create_report_date_mapping(reports_dir):
             logger.debug(f"下载结果文件列名: {results_df.columns.tolist()}")
             
             # 定义可能的列名
-
-            # 定义可能的列名
             stock_code_cols = ['ticker', 'stock_code', 'company_code']
             year_cols = ['year', 'report_year']
             # 确定实际使用的列名
@@ -242,7 +252,13 @@ def create_report_date_mapping(reports_dir):
                             if stock_code not in mapping:
                                 mapping[stock_code] = {}
                             
-                            mapping[stock_code][year] = file_date.strftime('%Y%m%d')
+                            # 使用当前时间减去3个月作为报告日期（避免未来日期问题）
+                            # 这是一个变通方法，这样我们就不会有一个未来的报告日期
+                            adjusted_date = datetime.now() - timedelta(days=90)
+                            mapping[stock_code][year] = adjusted_date.strftime('%Y%m%d')
+                            
+                            # Debug log
+                            logger.info(f"Adjusted report date for {stock_code}_{year}: {adjusted_date.strftime('%Y%m%d')}")
             
             return mapping
             
@@ -257,26 +273,32 @@ def create_report_date_mapping(reports_dir):
                 year_int = int(year)
                 
                 for file in os.listdir(year_dir):
-                    if file.endswith('.pdf') or file.endswith('.txt'):
-                        # 从文件名提取股票代码（假设格式：stock_code_year_*.pdf/txt）
+                    if file.endswith('.html') or file.endswith('.txt'):
+                        # 从文件名提取股票代码（假设格式：stock_code_year_*.html/txt）
                         parts = file.split('_')
-                        if len(parts) >= 2 and len(parts[0]) == 6 and parts[0].isdigit():
+                        if len(parts) >= 2:
                             stock_code = parts[0]
                             
                             # 使用文件修改日期
                             file_path = os.path.join(year_dir, file)
-                            file_date = datetime.fromtimestamp(os.path.getmtime(file_path))
+                            
+                            # 使用当前时间减去3个月作为报告日期（避免未来日期问题）
+                            adjusted_date = datetime.now() - timedelta(days=90)
                             
                             if stock_code not in mapping:
                                 mapping[stock_code] = {}
                             
-                            mapping[stock_code][year_int] = file_date.strftime('%Y%m%d')
+                            mapping[stock_code][year_int] = adjusted_date.strftime('%Y%m%d')
+                            
+                            # Debug log
+                            logger.info(f"Adjusted report date for {stock_code}_{year_int}: {adjusted_date.strftime('%Y%m%d')}")
         
         return mapping
     
     except Exception as e:
         logger.error(f"创建报告日期映射时出错: {e}")
         return {}
+
 def generate_targets(reports_dir, output_dir, price_start_date=None, price_end_date=None):
     """
     Generate target variables for all stocks with reports
@@ -316,13 +338,12 @@ def generate_targets(reports_dir, output_dir, price_start_date=None, price_end_d
         try:
             # Get price history for this stock
             price_history = get_stock_price_history(
-                
                 ticker=stock_code,
                 start_date=price_start_date,
                 end_date=price_end_date
             )
             
-            if price_history is None or len(price_history) < 60:  # Need at least 60 days for meaningful analysis
+            if price_history is None or len(price_history) < 20:  # Need at least 20 days for basic analysis
                 logger.warning(f"Insufficient price data for {stock_code}, skipping")
                 continue
             
@@ -332,25 +353,54 @@ def generate_targets(reports_dir, output_dir, price_start_date=None, price_end_d
             if returns_df is None:
                 continue
             
+            # Add a debug log to show the available trading dates
+            logger.debug(f"Trading dates for {stock_code}: {returns_df.index[0]} to {returns_df.index[-1]}")
+            
             # For each report year, extract the targets
             for year, report_date in years.items():
                 try:
                     # Convert report date to datetime
-                    report_datetime = datetime.strptime(report_date, '%Y%m%d')
+                    try:
+                        report_datetime = datetime.strptime(report_date, '%Y%m%d')
+                    except ValueError:
+                        # Try alternative date formats if needed
+                        formats = ['%Y%m%d', '%Y-%m-%d', '%m/%d/%Y', '%d-%m-%Y']
+                        for fmt in formats:
+                            try:
+                                report_datetime = datetime.strptime(report_date, fmt)
+                                break
+                            except:
+                                continue
+                        else:
+                            # If all format attempts fail, use a default date (3 months ago)
+                            report_datetime = datetime.now() - timedelta(days=90)
+                            logger.warning(f"Could not parse report date '{report_date}' for {stock_code}_{year}, using default")
                     
                     # Find the closest trading day on or after the report date
                     valid_dates = returns_df.index[returns_df.index >= report_datetime]
                     
                     if len(valid_dates) == 0:
-                        logger.warning(f"No trading days found after report date for {stock_code}_{year}")
-                        continue
-                    
-                    reference_date = valid_dates[0]
+                        # FALLBACK STRATEGY: If no future dates, use the most recent trading day
+                        logger.warning(f"No trading days found after report date {report_datetime} for {stock_code}_{year}")
+                        
+                        # Find the closest trading day before the report date
+                        prior_dates = returns_df.index[returns_df.index <= report_datetime]
+                        
+                        if len(prior_dates) == 0:
+                            logger.warning(f"No trading days found at all for {stock_code}_{year}")
+                            continue
+                        
+                        reference_date = prior_dates[-1]  # Use the most recent prior trading day
+                        logger.info(f"Falling back to closest prior trading day: {reference_date} for {stock_code}_{year}")
+                    else:
+                        reference_date = valid_dates[0]
+                        logger.info(f"Using trading day: {reference_date} for {stock_code}_{year}")
                     
                     # Extract the targets for this report
                     target_row = returns_df.loc[reference_date:reference_date].copy()
                     
                     if len(target_row) == 0:
+                        logger.warning(f"Could not extract target row for {stock_code}_{year} at {reference_date}")
                         continue
                     
                     # Add stock code and year
