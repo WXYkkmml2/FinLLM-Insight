@@ -151,50 +151,35 @@ def find_latest_model(models_dir, model_type='regression', target_window=60):
         return None, None
 
 def make_predictions(model, features_df, model_info=None):
-    """
-    Make predictions using a trained model
-    
-    Args:
-        model: Trained model
-        features_df (pd.DataFrame): Features
-        model_info (dict): Model information
-        
-    Returns:
-        pd.DataFrame: DataFrame with predictions
-    """
+    """使用模型进行预测"""
     try:
-        # Get feature columns from model info if available
+        # 获取特征列
         if model_info and 'features' in model_info:
             feature_columns = model_info['features']
-            logger.info(f"Using {len(feature_columns)} features from model info")
         else:
-            # Otherwise, use common patterns to identify feature columns
-            numeric_features = [col for col in features_df.columns if col.endswith('_score')]
-            categorical_features = [col for col in features_df.columns if col.endswith('_category')]
-            feature_columns = numeric_features + categorical_features
-            logger.info(f"Using {len(feature_columns)} features identified from column names")
+            # 如果没有提供特征列表，使用所有数值列
+            feature_columns = [col for col in features_df.columns if col not in ['company_code', 'report_year']]
         
-        # Create feature matrix
+        logger.info(f"Using features: {feature_columns}")
+        logger.info(f"Available columns in features_df: {features_df.columns.tolist()}")
+        
+        # 创建特征矩阵
         X = features_df.copy()
         
-        # Handle missing values
-        numeric_features = [col for col in X.columns if col.endswith('_score')]
+        # 处理缺失值
+        numeric_features = X.select_dtypes(include=['int64', 'float64']).columns
         X[numeric_features] = X[numeric_features].fillna(X[numeric_features].mean())
         
-        # 对分类特征进行编码
-        categorical_features = [col for col in X.columns if col.endswith('_category')]
-        if categorical_features:
-            logger.info(f"Encoding {len(categorical_features)} categorical features")
-            encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=False)
+        # 处理分类特征
+        categorical_features = X.select_dtypes(include=['object']).columns
+        if len(categorical_features) > 0:
+            logger.info(f"Categorical features: {categorical_features.tolist()}")
+            encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
             encoded_features = encoder.fit_transform(X[categorical_features])
-            encoded_feature_names = encoder.get_feature_names_out(categorical_features)
-            
-            # 创建编码后的特征DataFrame
-            encoded_df = pd.DataFrame(encoded_features, columns=encoded_feature_names, index=X.index)
-            
-            # 删除原始分类列并添加编码后的列
-            X = X.drop(columns=categorical_features)
-            X = pd.concat([X, encoded_df], axis=1)
+            encoded_df = pd.DataFrame(encoded_features, 
+                                    columns=encoder.get_feature_names_out(categorical_features))
+            X = pd.concat([X.drop(categorical_features, axis=1), encoded_df], axis=1)
+            logger.info(f"Encoded features: {X.columns.tolist()}")
         
         # 确保所有训练时使用的特征都存在
         if model_info and 'features' in model_info:
@@ -205,51 +190,36 @@ def make_predictions(model, features_df, model_info=None):
                 # 为缺失的特征添加零值列
                 for feature in missing_features:
                     X[feature] = 0
-            
             # 确保特征顺序与训练时一致
             X = X[required_features]
         
-        # Make predictions
+        # 进行预测
         predictions = model.predict(X)
         
-        # Create results dataframe
-        results_df = features_df[['company_code', 'report_year']].copy()
+        # 创建结果DataFrame
+        results = pd.DataFrame({
+            'company_code': features_df['company_code'],
+            'report_year': features_df['report_year']
+        })
         
-        # Add prediction column
-        if model_info and 'model_type' in model_info:
-            model_type = model_info['model_type']
-            target_window = model_info.get('target_window', 60)
-            
-            if model_type == 'regression':
-                results_df[f'predicted_return_{target_window}d'] = predictions
-            else:
-                results_df[f'predicted_up_{target_window}d'] = predictions
+        # 根据模型类型添加预测列
+        if model_info and 'model_type' in model_info and model_info['model_type'] == 'classification':
+            results['predicted_class'] = predictions
+            results['prediction_confidence'] = model.predict_proba(X).max(axis=1)
         else:
-            results_df['prediction'] = predictions
+            results['predicted_return'] = predictions
         
-        # Calculate prediction statistics
-        if model_info and model_info.get('model_type') == 'regression':
-            target_window = model_info.get('target_window', 60)
-            results_df['prediction_percentile'] = results_df[f'predicted_return_{target_window}d'].rank(pct=True)
-            
-            # Add prediction category based on percentile
-            def categorize_prediction(percentile):
-                if percentile < 0.25:
-                    return "Strong Decline"
-                elif percentile < 0.5:
-                    return "Slight Decline"
-                elif percentile < 0.75:
-                    return "Slight Growth"
-                else:
-                    return "Strong Growth"
-            
-            results_df['prediction_category'] = results_df['prediction_percentile'].apply(categorize_prediction)
+        # 计算预测统计信息
+        if 'predicted_return' in results.columns:
+            results['prediction_percentile'] = results['predicted_return'].rank(pct=True) * 100
+            results['prediction_category'] = pd.cut(results['predicted_return'],
+                                                 bins=[-float('inf'), 0, float('inf')],
+                                                 labels=['Negative', 'Positive'])
         
-        logger.info(f"Generated predictions for {len(results_df)} companies")
-        return results_df
-    
+        return results
+        
     except Exception as e:
-        logger.error(f"Error making predictions: {e}")
+        logger.error(f"预测过程中发生错误: {str(e)}")
         raise
 
 def save_predictions(predictions_df, output_dir, timestamp=None):
@@ -311,9 +281,9 @@ def create_prediction_summary(predictions_df, model_info, output_dir, timestamp=
         target_window = model_info.get('target_window', 60)
         
         if model_type == 'regression':
-            prediction_col = f'predicted_return_{target_window}d'
+            prediction_col = 'predicted_return'
         else:
-            prediction_col = f'predicted_up_{target_window}d'
+            prediction_col = 'predicted_class'
         
         # 确保预测值为数值类型
         predictions_df[prediction_col] = pd.to_numeric(predictions_df[prediction_col], errors='coerce')
@@ -345,7 +315,7 @@ def create_prediction_summary(predictions_df, model_info, output_dir, timestamp=
             category_counts = predictions_df['prediction_category'].value_counts()
             
             # Sort categories in logical order
-            category_order = ["Strong Decline", "Slight Decline", "Slight Growth", "Strong Growth"]
+            category_order = ["Negative", "Positive"]
             category_counts = category_counts.reindex(category_order)
             
             sns.barplot(x=category_counts.index, y=category_counts.values)
@@ -373,13 +343,14 @@ def create_prediction_summary(predictions_df, model_info, output_dir, timestamp=
             # Create plot
             plt.figure(figsize=(12, 8))
             
-            # 创建颜色列表，只包含实际需要的颜色
-            colors = ['red' if x < 0 else 'green' for x in top_combined[prediction_col]]
+            # 创建颜色映射
+            top_combined['is_positive'] = top_combined[prediction_col] >= 0
             
-            # 更新seaborn绘图代码，使用hue参数
+            # 使用单一颜色
+            color = 'green' if top_combined['is_positive'].iloc[0] else 'red'
             sns.barplot(data=top_combined, x=prediction_col, y='company_code', 
-                       hue=top_combined[prediction_col] >= 0, palette=['red', 'green'], 
-                       legend=False)
+                       color=color)
+            
             plt.title(f'Companies with Highest and Lowest Predicted Returns ({target_window}-day)')
             plt.xlabel('Predicted Return (%)')
             plt.ylabel('Company Code')
