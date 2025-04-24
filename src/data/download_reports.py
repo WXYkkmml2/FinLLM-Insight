@@ -192,7 +192,7 @@ def get_stock_list(index_name="S&P500", max_stocks=50):
         logger.info(f"Using default stock list with {len(default_stocks)} stocks")
         return default_stocks
 
-def get_annual_reports(ticker, api_key, min_year=2018, max_year=None):
+def get_annual_reports(ticker, api_key, min_year=2020, max_year=None):
     """
     Get annual report information for a specific stock using Financial Modeling Prep API
     
