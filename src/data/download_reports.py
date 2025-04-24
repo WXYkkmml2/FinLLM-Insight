@@ -278,154 +278,125 @@ def get_annual_reports(ticker, api_key, min_year=2018, max_year=None):
         logger.error(f"Error getting annual reports for {ticker}: {e}")
         return pd.DataFrame()
 
-def download_annual_reports(stock_list, save_dir, api_key, min_year=2018, max_year=None, delay=2, max_stocks=None):
+def get_annual_reports(ticker, api_key, min_year=2018, max_year=None):
     """
-    Download annual reports for the given stock list
+    Get annual report information for a specific stock using Financial Modeling Prep API
     
     Args:
-        stock_list (pd.DataFrame): DataFrame with stock codes and names
-        save_dir (str): Directory to save downloaded reports
+        ticker (str): Stock symbol
         api_key (str): Financial Modeling Prep API key
-        min_year (int): Minimum year for reports to download
-        max_year (int): Maximum year for reports to download (default: current year)
-        delay (int): Delay between downloads in seconds
-        max_stocks (int): Maximum number of stocks to process
+        min_year (int): Minimum year to fetch reports for
+        max_year (int): Maximum year to fetch reports for (None for current year)
         
     Returns:
-        pd.DataFrame: DataFrame with download results
+        pd.DataFrame: DataFrame with annual report information
     """
-    # Create save directory if it doesn't exist
-    os.makedirs(save_dir, exist_ok=True)
+    logger.info(f"Getting 10-K reports for {ticker}")
     
-    # Set max_year to current year if not specified
+    # Set default max year to current year if not specified
     if max_year is None:
         max_year = datetime.now().year
     
-    # Create subdirectory for each year
+    # Create year range
     years = list(range(min_year, max_year + 1))
-    for year in years:
-        year_dir = os.path.join(save_dir, str(year))
-        os.makedirs(year_dir, exist_ok=True)
     
-    # Limit number of stocks if specified
-    if max_stocks and max_stocks < len(stock_list):
-        logger.info(f"Limiting to {max_stocks} stocks")
-        stock_list = stock_list.head(max_stocks)
-    
-    results = []
-    
-    # Process each stock
-    for _, row in tqdm(stock_list.iterrows(), total=len(stock_list), desc="Downloading Annual Reports"):
-        ticker = row['ticker']
-        company_name = row['company_name']
-        logger.info(f"Processing stock: {ticker} - {company_name}")
+    try:
+        # Construct API URL
+        fmp_url = f"https://financialmodelingprep.com/api/v3/sec_filings/{ticker}?type=10-K&page=0&apikey={api_key}"
         
+        # Make API request with verbose logging
+        logger.info(f"Making API request to: {fmp_url.replace(api_key, 'API_KEY_HIDDEN')}")
+        
+        # Set proper headers
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'application/json',
+        }
+        
+        response = requests.get(fmp_url, headers=headers, timeout=15)
+        
+        # Check status code
+        if response.status_code != 200:
+            logger.error(f"API request failed with status code {response.status_code}: {response.text}")
+            return pd.DataFrame()
+        
+        # Log response size
+        logger.info(f"Received response of size {len(response.content)} bytes")
+        
+        # Try to parse as JSON
         try:
-            # Get annual report information
-            annual_reports = get_annual_reports(ticker, api_key, min_year, max_year)
+            data = response.json()
+        except ValueError as e:
+            logger.error(f"Failed to parse JSON response: {e}")
+            logger.error(f"Response content: {response.text[:500]}...")
+            return pd.DataFrame()
             
-            if annual_reports.empty:
-                logger.warning(f"No reports found for {ticker}")
-                # Add empty results for reporting
-                for year in years:
-                    results.append({
-                        'ticker': ticker,
-                        'company_name': company_name,
-                        'year': year,
-                        'file_path': '',
-                        'status': 'no_reports_found'
-                    })
+        # Check if data is empty or not a list
+        if not data:
+            logger.warning(f"Empty data returned for {ticker}")
+            return pd.DataFrame()
+        
+        if not isinstance(data, list):
+            logger.error(f"Unexpected response format: {data}")
+            return pd.DataFrame()
+            
+        logger.info(f"Retrieved {len(data)} filings for {ticker}")
+        
+        # Process results
+        reports = []
+        
+        for report in data:
+            filing_type = report.get('type', '')
+            
+            # Only process 10-K filings
+            if filing_type.lower() != '10-k':
                 continue
             
-            # Download reports for each year
-            for _, report in annual_reports.iterrows():
-                year = report['year']
-                url = report['url']
+            date_string = report.get('fillingDate', '')
+            if not date_string:
+                continue
                 
-                # Prepare file path
-                filename = f"{ticker}_{year}_annual_report.html"
-                year_dir = os.path.join(save_dir, str(year))
-                save_path = os.path.join(year_dir, filename)
+            # Extract year from filing date
+            date = date_string[:10]
+            try:
+                year = int(date_string[:4])
                 
-                # Check if file already exists
-                if os.path.exists(save_path) and os.path.getsize(save_path) > 1024:
-                    logger.info(f"File already exists: {save_path}")
-                    results.append({
-                        'ticker': ticker,
-                        'company_name': company_name,
-                        'year': year,
-                        'file_path': save_path,
-                        'status': 'existing'
-                    })
+                # Skip if not in requested years
+                if year < min_year or year > max_year:
                     continue
                 
-                # Download report
-                logger.info(f"Downloading report for {ticker} {year}: {url}")
-                success = download_file(url, save_path)
+                link = report.get('finalLink', '')
+                if not link:
+                    logger.warning(f"Missing final link for {ticker} {year}")
+                    continue
                 
-                if success:
-                    logger.info(f"Successfully downloaded report for {ticker} {year}")
-                    results.append({
-                        'ticker': ticker,
-                        'company_name': company_name,
-                        'year': year,
-                        'file_path': save_path,
-                        'status': 'downloaded'
-                    })
-                else:
-                    logger.error(f"Failed to download report for {ticker} {year}")
-                    results.append({
-                        'ticker': ticker,
-                        'company_name': company_name,
-                        'year': year,
-                        'file_path': save_path,
-                        'status': 'failed'
-                    })
-                
-                # Add delay to avoid rate limiting
-                time.sleep(delay)
-            
-            # Add empty results for years without reports
-            report_years = set(annual_reports['year'])
-            for year in years:
-                if year not in report_years:
-                    results.append({
-                        'ticker': ticker,
-                        'company_name': company_name,
-                        'year': year,
-                        'file_path': '',
-                        'status': 'no_report_for_year'
-                    })
-        
-        except Exception as e:
-            logger.error(f"Error processing {ticker}: {e}")
-            
-            # Add error entry for this stock
-            for year in years:
-                results.append({
+                reports.append({
                     'ticker': ticker,
-                    'company_name': company_name,
                     'year': year,
-                    'file_path': '',
-                    'status': 'error'
+                    'title': f"{ticker} {year} Annual Report (10-K)",
+                    'url': link,
+                    'filing_date': date
                 })
-    
-    # Create results DataFrame
-    results_df = pd.DataFrame(results)
-    
-    # Save results to CSV
-    if not results_df.empty:
-        results_path = os.path.join(save_dir, 'download_results.csv')
-        results_df.to_csv(results_path, index=False, encoding='utf-8-sig')
-        logger.info(f"Download results saved to: {results_path}")
+            except (ValueError, IndexError) as e:
+                logger.warning(f"Invalid date format: {date_string}, error: {e}")
+                continue
         
-        # Print summary
-        status_counts = results_df['status'].value_counts()
-        logger.info("Download summary:")
-        for status, count in status_counts.items():
-            logger.info(f"  {status}: {count}")
+        # Create DataFrame
+        if reports:
+            df = pd.DataFrame(reports)
+            logger.info(f"Found {len(df)} 10-K reports for {ticker}")
+            return df
+        else:
+            logger.warning(f"No 10-K reports found for {ticker}")
+            return pd.DataFrame()
     
-    return results_df
+    except requests.exceptions.RequestException as e:
+        logger.error(f"API request failed for {ticker}: {e}")
+        return pd.DataFrame()
+    
+    except Exception as e:
+        logger.error(f"Error getting annual reports for {ticker}: {e}")
+        return pd.DataFrame()
 
 def main():
     """Main function to run the download process"""
