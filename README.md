@@ -9,7 +9,7 @@
     <a href="#系统架构">系统架构</a> •
     <a href="#核心功能">核心功能</a> •
     <a href="#快速开始">快速开始</a> •
-    <a href="#使用指南">使用指南</a> •
+    <a href="#运行指南">运行指南</a> •
     <a href="#技术实现">技术实现</a> •
     <a href="#项目结构">项目结构</a> •
     <a href="#贡献指南">贡献指南</a> •
@@ -42,27 +42,64 @@ FinLLM-Insight 采用模块化设计，由以下主要部分组成：
 
 ### 1. 自动化数据获取
 
-支持S&P500指数成分股（可扩展至S&P400、S&P600）
-自动下载最新和历史10-K报告
-支持增量更新数据
+- 支持S&P500指数成分股（可扩展至S&P400、S&P600）
+- 自动下载最新和历史10-K报告
+- 支持增量更新数据
 
 ### 2. 智能财报分析
 
-利用大语言模型深度分析10-K报告内容
-提供多维度企业分析（财务健康、商业模式、增长前景等）
-生成结构化评分和投资建议
+- 利用大语言模型深度分析10-K报告内容
+- 提供多维度企业分析（财务健康、商业模式、增长前景等）
+- 生成结构化评分和投资建议
 
 ### 3. 收益率预测
 
-基于LLM特征训练机器学习模型
-支持不同时间窗口的收益预测
-提供预测可视化和解释
+- 基于LLM特征训练机器学习模型
+- 支持不同时间窗口的收益预测
+- 提供预测可视化和解释
 
 ### 4. 交互式年报查询
 
-基于RAG技术的自然语言查询
-快速定位关键信息
-提供信息来源的溯源
+- 基于RAG技术的自然语言查询
+- 快速定位关键信息
+- 提供信息来源的溯源
+
+## 快速开始
+
+### 环境要求
+
+- Python 3.8+
+- OpenAI API密钥
+- Financial Modeling Prep API密钥
+- 足够的存储空间用于年报数据（建议至少5GB）
+
+### 基础配置
+
+1. 克隆仓库并安装依赖：
+
+```bash
+git clone https://github.com/WXYkkmml2/FinLLM-Insight.git
+cd FinLLM-Insight
+pip install -r requirements.txt
+```
+
+2. 配置API密钥：
+
+创建一个`.env`文件并添加你的API密钥：
+
+```
+OPENAI_API_KEY=your_openai_api_key_here
+```
+
+3. 在`config/config.json`中配置Financial Modeling Prep API密钥：
+
+```json
+{
+  "financial_modelling_prep_api_key": "your_fmp_api_key_here",
+  ...
+}
+```
+
 ## 运行指南
 
 ### 本地环境运行
@@ -71,7 +108,7 @@ FinLLM-Insight 采用模块化设计，由以下主要部分组成：
 
 ```bash
 # 克隆仓库
-git clone https://github.com/yourusername/FinLLM-Insight.git
+git clone https://github.com/WXYkkmml2/FinLLM-Insight.git
 cd FinLLM-Insight
 
 # 创建虚拟环境 (推荐使用conda)
@@ -139,107 +176,9 @@ python src/rag/rag_component.py --interactive
 
 ### 在Kaggle/Colab上运行
 
-#### Kaggle设置
+> **⚠️ 重要提示：** 由于SEC和Financial Modeling Prep网站的访问限制，在Kaggle、Colab等云服务器环境中直接运行`download_reports.py`步骤可能会遇到403错误（禁止访问）。建议在本地环境下载年报数据，然后将数据上传到云环境，或直接从步骤2开始运行。
 
-1. 创建新的Kaggle笔记本
-2. 启用GPU加速（对于嵌入生成和模型训练有帮助）
-3. 在笔记本中运行以下命令：
 
-```python
-# 克隆仓库
-!git clone https://github.com/yourusername/FinLLM-Insight.git
-%cd FinLLM-Insight
-
-# 安装依赖
-!pip install -r requirements.txt
-
-# 设置API密钥（使用Kaggle Secrets）
-import os
-os.environ["OPENAI_API_KEY"] = "your_openai_api_key_here"  # 替换为你的密钥
-
-# 修改配置文件
-import json
-with open('config/config.json', 'r') as f:
-    config = json.load(f)
-    
-config['financial_modelling_prep_api_key'] = "your_fmp_api_key_here"  # 替换为你的密钥
-config['max_stocks'] = 10  # 降低股票数量以适应Kaggle环境
-
-with open('config/config.json', 'w') as f:
-    json.dump(config, f, indent=4)
-```
-
-#### Google Colab设置
-
-1. 创建新的Colab笔记本
-2. 启用GPU加速（在"运行时"→"更改运行时类型"→选择"GPU"）
-3. 在笔记本中运行以下命令：
-
-```python
-# 克隆仓库
-!git clone https://github.com/yourusername/FinLLM-Insight.git
-%cd FinLLM-Insight
-
-# 安装依赖
-!pip install -r requirements.txt
-
-# 挂载Google Drive（可选，用于保存结果）
-from google.colab import drive
-drive.mount('/content/drive')
-
-# 设置API密钥
-import os
-os.environ["OPENAI_API_KEY"] = "your_openai_api_key_here"  # 替换为你的密钥
-
-# 修改配置文件
-import json
-with open('config/config.json', 'r') as f:
-    config = json.load(f)
-    
-config['financial_modelling_prep_api_key'] = "your_fmp_api_key_here"  # 替换为你的密钥
-config['max_stocks'] = 5  # 降低股票数量以适应Colab环境
-config['annual_reports_html_save_directory'] = "/content/drive/MyDrive/FinLLM-Insight/data/raw/annual_reports"  # 可选：保存到Google Drive
-
-with open('config/config.json', 'w') as f:
-    json.dump(config, f, indent=4)
-```
-
-#### 在Kaggle/Colab上分步运行
-
-在笔记本中依次执行以下命令：
-
-```python
-# 步骤1: 下载美国上市公司10-K报告，（max_stocks 5，最多持有 5 支股票，例如，某人可能会说：“我的投资策略是 max_stocks 5，这样我能更专注于研究和管理我的持仓。”）
-!python src/data/download_reports.py --max_stocks 5
-
-# 步骤2: 转换报告格式 (HTML到文本)
-!python src/data/convert_formats.py
-
-# 步骤3: 生成目标变量 (基于股票价格)
-!python src/data/make_targets.py
-
-# 步骤4: 生成文本嵌入向量
-!python src/features/embeddings.py
-
-# 步骤5: 使用LLM生成结构化特征
-!python src/features/llm_features.py
-
-# 步骤6: 训练预测模型
-!python src/models/train.py --model_type regression --model_name random_forest
-
-# 步骤7: 生成预测结果
-!python src/models/predict.py
-```
-
-#### 在Kaggle/Colab上运行完整流水线
-
-```python
-# 运行完整流水线
-!python src/pipeline.py
-
-# 监控日志（由于云环境可能运行时间较长）
-!tail -f pipeline.log
-```
 
 ### 注意事项
 
@@ -255,6 +194,61 @@ with open('config/config.json', 'w') as f:
 
 6. **调试模式**：添加`--debug`参数可以开启详细日志，有助于问题排查。
 
+7. **SEC访问限制**：由于SEC官方网站对云服务器IP有访问限制，在Kaggle/Colab等环境中直接下载年报可能会遇到403错误。建议在本地下载数据后上传到云环境，或使用预处理好的数据。
+
 ```bash
 python src/pipeline.py --debug
 ```
+
+## 技术实现
+
+项目使用了以下主要技术：
+
+- **数据获取**: Python requests, BeautifulSoup4
+- **文本处理**: Python re, NLTK
+- **向量嵌入**: Sentence-Transformers
+- **向量数据库**: ChromaDB
+- **机器学习**: Scikit-learn, XGBoost, LightGBM
+- **大语言模型**: OpenAI API
+- **检索增强生成**: LangChain
+- **数据可视化**: Matplotlib, Seaborn
+
+## 项目结构
+
+```
+FinLLM-Insight/
+├── config/                # 配置文件
+│   ├── config.json        # 全局配置
+│   └── questions.json     # LLM分析问题
+├── data/                  # 数据存储
+│   ├── raw/               # 原始年报数据
+│   └── processed/         # 处理后的数据
+├── models/                # 保存训练好的模型
+├── notebooks/             # Jupyter笔记本
+├── predictions/           # 预测结果输出
+├── src/                   # 源代码
+│   ├── data/              # 数据处理模块
+│   ├── features/          # 特征工程模块
+│   ├── models/            # 模型训练和预测
+│   ├── rag/               # 检索增强生成模块
+│   └── pipeline.py        # 完整处理流水线
+├── .env                   # 环境变量
+├── LICENSE                # 许可证
+├── README.md              # 项目说明
+├── requirements.txt       # 依赖项
+└── setup.py               # 安装脚本
+```
+
+
+## 鸣谢
+
+- [Financial Modeling Prep API](https://financialmodelingprep.com/developer/docs/) - 提供财务数据API
+- [U.S. Securities and Exchange Commission](https://www.sec.gov/) - 提供10-K报告
+- [OpenAI](https://openai.com/) - 提供大语言模型API
+- [Hugging Face](https://huggingface.co/) - 提供开源NLP模型
+- [Sentence-Transformers](https://www.sbert.net/) - 提供文本嵌入模型
+- [ChromaDB](https://www.trychroma.com/) - 提供向量数据库
+
+## 许可证
+
+本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件
