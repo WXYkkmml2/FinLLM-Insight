@@ -309,13 +309,13 @@ def process_report_files(input_dir, output_dir, years=None, overwrite=False, fil
 
 def main():
     """Main function to run the conversion process"""
-    parser = argparse.ArgumentParser(description='Convert annual reports to text format')
+    parser = argparse.ArgumentParser(description='Convert 10-K reports to text')
     parser.add_argument('--config_path', type=str, default='config/config.json', 
                         help='Path to configuration file')
     parser.add_argument('--overwrite', action='store_true', 
                         help='Overwrite existing files')
     parser.add_argument('--file_type', type=str, default='html', choices=['html', 'pdf'],
-                        help='Type of files to process')
+                        help='Type of files to process (html or pdf)')
     args = parser.parse_args()
     
     # Load configuration
@@ -327,11 +327,10 @@ def main():
     
     # Get years to process
     min_year = config.get('min_year', 2018)
-    max_year = config.get('max_year', None)
-    
-    if max_year is None:
-        max_year = datetime.now().year
-        
+    max_year = config.get('max_year')
+    if not max_year:
+        import datetime
+        max_year = datetime.datetime.now().year
     years = list(range(min_year, max_year + 1))
     
     # Process report files
@@ -344,5 +343,4 @@ def main():
     )
 
 if __name__ == "__main__":
-    from datetime import datetime
     main()
