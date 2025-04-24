@@ -209,8 +209,8 @@ with open('config/config.json', 'w') as f:
 在笔记本中依次执行以下命令：
 
 ```python
-# 步骤1: 下载美国上市公司10-K报告
-!python src/data/download_reports.py --max_stocks 5，最多持有 5 支股票，例如，某人可能会说：“我的投资策略是 max_stocks 5，这样我能更专注于研究和管理我的持仓。”
+# 步骤1: 下载美国上市公司10-K报告，（max_stocks 5，最多持有 5 支股票，例如，某人可能会说：“我的投资策略是 max_stocks 5，这样我能更专注于研究和管理我的持仓。”）
+!python src/data/download_reports.py --max_stocks 5
 
 # 步骤2: 转换报告格式 (HTML到文本)
 !python src/data/convert_formats.py
