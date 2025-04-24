@@ -448,83 +448,140 @@ def create_target_visualizations(targets_df, output_dir):
         targets_df (pd.DataFrame): DataFrame with target variables
         output_dir (str): Directory to save visualizations
     """
-    # Create a directory for visualizations
-    viz_dir = os.path.join(output_dir, 'visualizations')
-    os.makedirs(viz_dir, exist_ok=True)
-    
-    # Create histograms of returns for different time windows
-    plt.figure(figsize=(15, 10))
-    
-    return_columns = [col for col in targets_df.columns if col.startswith('future_return_')]
-    
-    for i, col in enumerate(return_columns):
-        plt.subplot(2, 3, i+1)
+    try:
+        # Create a directory for visualizations
+        viz_dir = os.path.join(output_dir, 'visualizations')
+        os.makedirs(viz_dir, exist_ok=True)
         
-        # Convert window name for title (e.g., future_return_20d -> 20-day)
-        window = col.split('_')[-1]
-        window = window.replace('d', '-day')
+        # 确保列名是字符串类型，处理可能的元组列名
+        targets_df.columns = [col if isinstance(col, str) else f"{col[0]}_{col[1]}" for col in targets_df.columns]
         
-        sns.histplot(targets_df[col].dropna(), kde=True)
-        plt.title(f'Distribution of {window} Returns')
-        plt.xlabel('Return (%)')
-        plt.ylabel('Frequency')
+        # 获取所有以'future_return_'开头的列
+        return_columns = [col for col in targets_df.columns if isinstance(col, str) and col.startswith('future_return_')]
         
-        # Add vertical line at 0
-        plt.axvline(x=0, color='red', linestyle='--')
-    
-    plt.tight_layout()
-    plt.savefig(os.path.join(viz_dir, 'return_distributions.png'))
-    plt.close()
-    
-    # Create bar charts of up/down ratios
-    plt.figure(figsize=(12, 6))
-    
-    up_columns = [col for col in targets_df.columns if col.startswith('future_up_')]
-    up_ratios = [targets_df[col].mean() * 100 for col in up_columns]
-    windows = [col.split('_')[-1].replace('d', '') for col in up_columns]
-    
-    plt.bar(windows, up_ratios)
-    plt.title('Percentage of Stocks with Positive Returns')
-    plt.xlabel('Time Window (days)')
-    plt.ylabel('Positive Return %')
-    plt.grid(axis='y', linestyle='--', alpha=0.7)
-    
-    # Add horizontal line at 50%
-    plt.axhline(y=50, color='red', linestyle='--')
-    
-    # Add value labels
-    for i, v in enumerate(up_ratios):
-        plt.text(i, v + 1, f'{v:.1f}%', ha='center')
-    
-    plt.tight_layout()
-    plt.savefig(os.path.join(viz_dir, 'positive_return_ratios.png'))
-    plt.close()
-    
-    # Create distribution by category
-    plt.figure(figsize=(15, 10))
-    
-    cat_columns = [col for col in targets_df.columns if col.startswith('future_category_')]
-    
-    for i, col in enumerate(cat_columns):
-        plt.subplot(2, 3, i+1)
+        if return_columns:  # 只在有相关列时创建图表
+            try:
+                # Create histograms of returns for different time windows
+                plt.figure(figsize=(15, 10))
+                
+                for i, col in enumerate(return_columns[:6]):  # 最多显示6个窗口
+                    plt.subplot(2, 3, i+1)
+                    
+                    # Convert window name for title (e.g., future_return_20d -> 20-day)
+                    window = col.split('_')[-1]
+                    window = window.replace('d', '-day')
+                    
+                    # 删除NaN值
+                    valid_data = targets_df[col].dropna()
+                    
+                    if len(valid_data) > 0:  # 确保有有效数据
+                        sns.histplot(valid_data, kde=True)
+                        plt.title(f'Distribution of {window} Returns')
+                        plt.xlabel('Return (%)')
+                        plt.ylabel('Frequency')
+                        
+                        # Add vertical line at 0
+                        plt.axvline(x=0, color='red', linestyle='--')
+                
+                # 使用更安全的布局调整
+                try:
+                    plt.tight_layout()
+                except:
+                    plt.subplots_adjust(wspace=0.3, hspace=0.3)
+                
+                plt.savefig(os.path.join(viz_dir, 'return_distributions.png'))
+                plt.close()
+            except Exception as e:
+                logger.warning(f"Error creating return distributions visualization: {e}")
         
-        # Convert window name for title
-        window = col.split('_')[-1]
-        window = window.replace('d', '-day')
+        # 获取所有以'future_up_'开头的列
+        up_columns = [col for col in targets_df.columns if isinstance(col, str) and col.startswith('future_up_')]
         
-        category_counts = targets_df[col].value_counts().sort_index()
+        if up_columns:  # 只在有相关列时创建图表
+            try:
+                # Create bar charts of up/down ratios
+                plt.figure(figsize=(12, 6))
+                
+                # 安全计算比率，处理NaN值
+                up_ratios = []
+                windows = []
+                
+                for col in up_columns:
+                    valid_data = targets_df[col].dropna()
+                    if len(valid_data) > 0:  # 确保有有效数据
+                        up_ratios.append(valid_data.mean() * 100)
+                        windows.append(col.split('_')[-1].replace('d', ''))
+                
+                if len(up_ratios) > 0:  # 确保有数据要绘制
+                    plt.bar(windows, up_ratios)
+                    plt.title('Percentage of Stocks with Positive Returns')
+                    plt.xlabel('Time Window (days)')
+                    plt.ylabel('Positive Return %')
+                    plt.grid(axis='y', linestyle='--', alpha=0.7)
+                    
+                    # Add horizontal line at 50%
+                    plt.axhline(y=50, color='red', linestyle='--')
+                    
+                    # Add value labels - 确保v不是NaN
+                    for i, v in enumerate(up_ratios):
+                        if not np.isnan(v):  # 检查是否为NaN
+                            plt.text(i, v + 1, f'{v:.1f}%', ha='center')
+                    
+                    # 使用更安全的布局调整
+                    try:
+                        plt.tight_layout()
+                    except:
+                        plt.subplots_adjust(wspace=0.3, hspace=0.3)
+                    
+                    plt.savefig(os.path.join(viz_dir, 'positive_return_ratios.png'))
+                
+                plt.close()
+            except Exception as e:
+                logger.warning(f"Error creating up/down ratios visualization: {e}")
         
-        plt.pie(
-            category_counts, 
-            labels=category_counts.index, 
-            autopct='%1.1f%%',
-            startangle=90
-        )
-        plt.title(f'Distribution of {window} Return Categories')
+        # 获取所有以'future_category_'开头的列
+        cat_columns = [col for col in targets_df.columns if isinstance(col, str) and col.startswith('future_category_')]
+        
+        if cat_columns:  # 只在有相关列时创建图表
+            try:
+                # Create distribution by category
+                plt.figure(figsize=(15, 10))
+                
+                for i, col in enumerate(cat_columns[:6]):  # 最多显示6个窗口
+                    plt.subplot(2, 3, i+1)
+                    
+                    # Convert window name for title
+                    window = col.split('_')[-1]
+                    window = window.replace('d', '-day')
+                    
+                    # 安全地获取分类计数
+                    valid_data = targets_df[col].dropna()
+                    if len(valid_data) > 0:  # 确保有有效数据
+                        category_counts = valid_data.value_counts().sort_index()
+                        
+                        if len(category_counts) > 0:  # 确保有数据要绘制
+                            plt.pie(
+                                category_counts, 
+                                labels=category_counts.index, 
+                                autopct='%1.1f%%',
+                                startangle=90
+                            )
+                            plt.title(f'Distribution of {window} Return Categories')
+                
+                # 使用更安全的布局调整
+                try:
+                    plt.tight_layout()
+                except:
+                    plt.subplots_adjust(wspace=0.3, hspace=0.3)
+                
+                plt.savefig(os.path.join(viz_dir, 'return_categories.png'))
+                plt.close()
+            except Exception as e:
+                logger.warning(f"Error creating category distribution visualization: {e}")
     
-    plt.tight_layout()
-    plt.savefig(os.path.join(viz_dir, 'return_categories.png'))
-    plt.close()
+    except Exception as e:
+        logger.error(f"Failed to create visualizations: {e}")
+        # 继续执行程序，不要因为可视化失败而中断整个目标生成过程
 
 def main():
     """Main function to run the target generation process"""
