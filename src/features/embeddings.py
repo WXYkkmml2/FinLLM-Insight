@@ -317,13 +317,32 @@ def main():
     chunk_size = config.get('chunk_size', 1000)
     chunk_overlap = config.get('chunk_overlap', 200)
     
-    # Process reports using normal sync method
-    asyncio.run(process_reports(
-        text_dir=text_dir,
-        output_dir=output_dir,
-        embedding_model=embedding_model,
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap
-    ))
+    # Check if Hugging Face API key is set
+    if not os.environ.get("HUGGINGFACE_API_KEY"):
+        logger.error("HUGGINGFACE_API_KEY environment variable is not set")
+        logger.info("Please set your Hugging Face API key using:")
+        logger.info("export HUGGINGFACE_API_KEY='your_api_key_here'")
+        sys.exit(1)
+    
+    # Process reports using synchronous method
+    try:
+        stats = process_reports(
+            text_dir=text_dir,
+            output_dir=output_dir,
+            embedding_model=embedding_model,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap
+        )
+        
+        logger.info(f"Processing completed with stats: {stats}")
+        
+        if stats['error_files'] > 0:
+            logger.warning(f"Failed to process {stats['error_files']} files")
+            logger.warning("Please check the logs for detailed error messages")
+        
+    except Exception as e:
+        logger.error(f"Error during processing: {e}")
+        sys.exit(1)
+
 if __name__ == "__main__":
     main()
