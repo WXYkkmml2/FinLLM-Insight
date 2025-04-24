@@ -52,34 +52,22 @@ def load_config(config_path):
         logger.error(f"Failed to load config: {e}")
         raise
 
-def download_file(url, save_path, max_retries=3, initial_delay=2):
+def download_file(url, save_path, max_retries=3, initial_delay=10): # 保持 initial_delay=10 或其他值
     """
     Download file with retry mechanism
-    
-    Args:
-        url (str): URL to download
-        save_path (str): Path to save the file
-        max_retries (int): Maximum number of retry attempts
-        initial_delay (int): Initial delay before first retry
-        
-    Returns:
-        bool: Success status
+    ...
     """
     headers = {'User-Agent': 'Mozilla/5.0'}
-    
+
     for attempt in range(max_retries):
         try:
             logger.info(f"Downloading attempt {attempt+1}: {url}")
-            response = requests.get(url, headers=headers, timeout=30)
             
+            # requests 库会自动检查并使用 os.environ['HTTP_PROXY'] 和 os.environ['HTTPS_PROXY']
+            response = requests.get(url, headers=headers, timeout=30)
+
             if response.status_code == 200:
-                # Get the content of the file
-                page_content = response.content
-                
-                # Write the content to the local file
-                with open(save_path, "wb") as file:
-                    file.write(page_content)
-                
+               # ... (下载成功后的逻辑)
                 if os.path.exists(save_path) and os.path.getsize(save_path) > 0:
                     logger.info(f"Successfully downloaded: {save_path} ({os.path.getsize(save_path)/1024:.2f} KB)")
                     return True
@@ -87,21 +75,22 @@ def download_file(url, save_path, max_retries=3, initial_delay=2):
                     logger.warning(f"Downloaded file is empty: {save_path}")
             else:
                 logger.error(f'Response not 200. Status: {response.status_code}')
-                
+
             if attempt < max_retries - 1:
-                wait_time = initial_delay * (2 ** attempt)
+                wait_time = initial_delay * (2 ** attempt) # 使用 download_file 自己的 initial_delay
                 logger.info(f"Waiting {wait_time}s before retrying...")
                 time.sleep(wait_time)
-        
+
         except Exception as e:
             logger.error(f"Download error: {str(e)}")
-            
+
             if attempt < max_retries - 1:
-                wait_time = initial_delay * (2 ** attempt)
-                logger.info(f"Waiting {wait_time}s before retrying...")
-                time.sleep(wait_time)
-    
+                 wait_time = initial_delay * (2 ** attempt) # 使用 download_file 自己的 initial_delay
+                 logger.info(f"Waiting {wait_time}s before retrying...")
+                 time.sleep(wait_time)
+
     return False
+
 def get_stock_list(index_name="S&P500", max_stocks=50):
     """
     Get US stock list from specified index
@@ -199,13 +188,12 @@ def get_annual_reports(ticker, api_key, min_year=2018, max_year=None):
         fmp_url = f'https://financialmodelingprep.com/api/v3/sec_filings/{ticker}?type=10-K&page=0&apikey={api_key}'
         
         logger.info(f"API URL: {fmp_url.replace(api_key, 'API_KEY_HIDDEN')}")
-        
+        response = requests.get(fmp_url) 
         # Make simple direct request
         response = requests.get(fmp_url)
-        
         if response.status_code != 200:
-            logger.error(f"API request failed with status code {response.status_code}")
-            return pd.DataFrame()
+             logger.error(f"API request failed with status code {response.status_code}")
+             return pd.DataFrame() 
         
         try:
             data = json.loads(response.content)
@@ -347,9 +335,11 @@ def download_annual_reports(stock_list, save_dir, api_key, min_year=2018, max_ye
                     })
                     continue
                 
+
                 # Download report
-                logger.info(f"Downloading report for {ticker} {year}: {url}")
-                success = download_file(url, save_path)
+                logger.info(f"Attempting download for {ticker} {year}: {url}")
+                # download_file 将自动使用设置的环境变量代理
+                success = download_file(url, save_path, initial_delay=30) # 明确设置 download_file 的 initial_delay
                 
                 if success:
                     logger.info(f"Successfully downloaded report for {ticker} {year}")
