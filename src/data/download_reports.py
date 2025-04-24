@@ -266,7 +266,7 @@ def get_annual_reports(ticker, api_key, min_year=2018, max_year=None):
         logger.error(f"Error getting annual reports for {ticker}: {e}")
         return pd.DataFrame()
         
-def download_annual_reports(stock_list, save_dir, api_key, min_year=2018, max_year=None, delay=2, max_stocks=None):
+def download_annual_reports(stock_list, save_dir, api_key, min_year=2018, max_year=None, delay=10, max_stocks=None):
     """
     Download annual reports for the given stock list
     
