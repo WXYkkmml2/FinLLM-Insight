@@ -204,21 +204,25 @@ def create_embedding_function(embedding_model):
         embedding_function: Function to generate embeddings
     """
     try:
-        if embedding_model.lower() == "openai":
-            # Use OpenAI's embeddings (requires API key)
-            import openai
-            openai_ef = embedding_functions.OpenAIEmbeddingFunction(
-                api_key=os.environ.get("OPENAI_API_KEY"),
-                model_name="text-embedding-ada-002"
-            )
-            return openai_ef
-        else:
-            # Use Hugging Face models (offline, no API key needed)
-            huggingface_ef = embedding_functions.HuggingFaceEmbeddingFunction(
-                api_key=os.environ.get("HUGGINGFACE_API_KEY", None),
-                model_name=embedding_model
-            )
-            return huggingface_ef
+        # Use local embedding model
+        from sentence_transformers import SentenceTransformer
+        
+        # Create model directory if it doesn't exist
+        model_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "models")
+        os.makedirs(model_dir, exist_ok=True)
+        
+        # Download and load model
+        logger.info(f"Downloading model {embedding_model}...")
+        model = SentenceTransformer(embedding_model, cache_folder=model_dir)
+        logger.info("Model downloaded successfully")
+        
+        # Create embedding function
+        def embedding_function(texts):
+            embeddings = model.encode(texts)
+            return embeddings.tolist()
+        
+        return embedding_function
+        
     except Exception as e:
         logger.error(f"Failed to create embedding function: {e}")
         raise
