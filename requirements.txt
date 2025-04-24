@@ -6,13 +6,14 @@ numpy>=1.20.0
 tqdm>=4.61.0
 
 # 数据获取
+yfinance>=0.2.12  # 用于获取美股历史价格数据
 requests>=2.25.1
-beautifulsoup4>=4.9.3
-yfinance>=0.2.3
+beautifulsoup4>=4.9.3  # 用于解析HTML文件
 
 # 文件处理
 PyPDF2>=2.10.0
 pdfplumber>=0.7.0
+lxml>=4.9.0  # 用于高效HTML解析
 
 # 机器学习
 scikit-learn>=1.0.0
