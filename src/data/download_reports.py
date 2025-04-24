@@ -52,7 +52,7 @@ def load_config(config_path):
         logger.error(f"Failed to load config: {e}")
         raise
 
-def download_file(url, save_path, max_retries=3, initial_delay=10):
+def download_file(url, save_path, max_retries=3, initial_delay=30):
     """
     Download file with retry mechanism
     
@@ -266,7 +266,7 @@ def get_annual_reports(ticker, api_key, min_year=2018, max_year=None):
         logger.error(f"Error getting annual reports for {ticker}: {e}")
         return pd.DataFrame()
         
-def download_annual_reports(stock_list, save_dir, api_key, min_year=2018, max_year=None, delay=10, max_stocks=None):
+def download_annual_reports(stock_list, save_dir, api_key, min_year=2018, max_year=None, delay=30, max_stocks=None):
     """
     Download annual reports for the given stock list
     
@@ -449,7 +449,7 @@ def main():
         save_dir = config.get('annual_reports_html_save_directory', './data/raw/annual_reports')
         min_year = config.get('min_year', 2018)
         max_year = config.get('max_year', None)
-        delay = config.get('download_delay', 10)
+        delay = config.get('download_delay', 30)
         
         # Download annual reports
         logger.info(f"Starting download of annual reports for years {min_year}-{max_year or 'current'}")
