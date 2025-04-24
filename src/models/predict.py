@@ -174,20 +174,14 @@ def make_predictions(model, features_df, model_info=None):
             feature_columns = numeric_features + categorical_features
             logger.info(f"Using {len(feature_columns)} features identified from column names")
         
-        # Check if we have all required features
-        missing_features = [f for f in feature_columns if f not in features_df.columns]
-        if missing_features:
-            logger.warning(f"Missing features: {missing_features}")
-            # Only use available features
-            feature_columns = [f for f in feature_columns if f in features_df.columns]
-        
         # Create feature matrix
-        X = features_df[feature_columns].copy()
+        X = features_df.copy()
         
         # Handle missing values
-        X = X.fillna(X.mean())
+        numeric_features = [col for col in X.columns if col.endswith('_score')]
+        X[numeric_features] = X[numeric_features].fillna(X[numeric_features].mean())
         
-        # Encode categorical features if present
+        # 对分类特征进行编码
         categorical_features = [col for col in X.columns if col.endswith('_category')]
         if categorical_features:
             logger.info(f"Encoding {len(categorical_features)} categorical features")
@@ -195,12 +189,25 @@ def make_predictions(model, features_df, model_info=None):
             encoded_features = encoder.fit_transform(X[categorical_features])
             encoded_feature_names = encoder.get_feature_names_out(categorical_features)
             
-            # Create DataFrame with encoded features
+            # 创建编码后的特征DataFrame
             encoded_df = pd.DataFrame(encoded_features, columns=encoded_feature_names, index=X.index)
             
-            # Drop original categorical columns and add encoded ones
+            # 删除原始分类列并添加编码后的列
             X = X.drop(columns=categorical_features)
             X = pd.concat([X, encoded_df], axis=1)
+        
+        # 确保所有训练时使用的特征都存在
+        if model_info and 'features' in model_info:
+            required_features = model_info['features']
+            missing_features = [f for f in required_features if f not in X.columns]
+            if missing_features:
+                logger.warning(f"Missing features: {missing_features}")
+                # 为缺失的特征添加零值列
+                for feature in missing_features:
+                    X[feature] = 0
+            
+            # 确保特征顺序与训练时一致
+            X = X[required_features]
         
         # Make predictions
         predictions = model.predict(X)
@@ -290,6 +297,11 @@ def create_prediction_summary(predictions_df, model_info, output_dir, timestamp=
         if timestamp is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
+        # 保存预测结果到CSV
+        predictions_path = os.path.join(output_dir, f"predictions_{timestamp}.csv")
+        predictions_df.to_csv(predictions_path, index=False, encoding='utf-8-sig')
+        logger.info(f"Saved predictions to {predictions_path}")
+        
         # Create visualization directory
         viz_dir = os.path.join(output_dir, 'visualizations')
         os.makedirs(viz_dir, exist_ok=True)
@@ -303,18 +315,21 @@ def create_prediction_summary(predictions_df, model_info, output_dir, timestamp=
         else:
             prediction_col = f'predicted_up_{target_window}d'
         
+        # 确保预测值为数值类型
+        predictions_df[prediction_col] = pd.to_numeric(predictions_df[prediction_col], errors='coerce')
+        
         # Create distribution plot
         plt.figure(figsize=(10, 6))
         
         if model_type == 'regression':
             # Distribution of predicted returns
-            sns.histplot(predictions_df[prediction_col], kde=True)
+            sns.histplot(data=predictions_df, x=prediction_col, kde=True)
             plt.axvline(x=0, color='red', linestyle='--')
             plt.title(f'{target_window}-day Predicted Return Distribution')
             plt.xlabel('Predicted Return (%)')
         else:
             # Distribution of prediction classes
-            sns.countplot(x=prediction_col, data=predictions_df)
+            sns.countplot(data=predictions_df, x=prediction_col)
             plt.title(f'{target_window}-day Prediction Distribution')
             plt.xlabel('Predicted Direction')
             plt.xticks([0, 1], ['Down', 'Up'])
@@ -357,16 +372,21 @@ def create_prediction_summary(predictions_df, model_info, output_dir, timestamp=
             
             # Create plot
             plt.figure(figsize=(12, 8))
-            bar_colors = ['red' if x < 0 else 'green' for x in top_combined[prediction_col]]
             
-            ax = sns.barplot(x=prediction_col, y='company_code', data=top_combined, palette=bar_colors)
+            # 创建颜色列表，只包含实际需要的颜色
+            colors = ['red' if x < 0 else 'green' for x in top_combined[prediction_col]]
+            
+            # 更新seaborn绘图代码，使用hue参数
+            sns.barplot(data=top_combined, x=prediction_col, y='company_code', 
+                       hue=top_combined[prediction_col] >= 0, palette=['red', 'green'], 
+                       legend=False)
             plt.title(f'Companies with Highest and Lowest Predicted Returns ({target_window}-day)')
             plt.xlabel('Predicted Return (%)')
             plt.ylabel('Company Code')
             
             # Add values to bars
             for i, v in enumerate(top_combined[prediction_col]):
-                ax.text(v + (0.01 if v >= 0 else -0.01), i, f"{v:.2f}%", 
+                plt.text(v + (0.01 if v >= 0 else -0.01), i, f"{v:.2f}%", 
                         va='center', ha='left' if v >= 0 else 'right')
         
         else:
@@ -381,12 +401,14 @@ def create_prediction_summary(predictions_df, model_info, output_dir, timestamp=
                     predictions_df['prediction_confidence'] = np.max(proba, axis=1)
                     
                     # Get top confident predictions for each class
+                    predictions_df[prediction_col] = pd.to_numeric(predictions_df[prediction_col], errors='coerce')
                     top_pos = predictions_df[predictions_df[prediction_col] == 1].nlargest(10, 'prediction_confidence')
                     top_neg = predictions_df[predictions_df[prediction_col] == 0].nlargest(10, 'prediction_confidence')
                     
                     # Combine and plot
                     top_combined = pd.concat([top_pos, top_neg])
-                    sns.barplot(x='prediction_confidence', y='company_code', hue=prediction_col, data=top_combined)
+                    sns.barplot(data=top_combined, x='prediction_confidence', y='company_code', 
+                              hue=prediction_col, palette=['red', 'green'])
                     plt.title(f'Companies with Highest Prediction Confidence ({target_window}-day)')
                     plt.xlabel('Prediction Confidence')
                     plt.ylabel('Company Code')
@@ -544,7 +566,7 @@ def create_prediction_summary(predictions_df, model_info, output_dir, timestamp=
                 
                 <div class="section">
                     <h2>Complete Results</h2>
-                    <p>Complete prediction results are saved in <a href="{os.path.basename(output_path)}">{os.path.basename(output_path)}</a></p>
+                    <p>Complete prediction results are saved in <a href="{os.path.basename(predictions_path)}">{os.path.basename(predictions_path)}</a></p>
                 </div>
             </body>
             </html>
