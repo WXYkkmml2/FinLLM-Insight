@@ -101,9 +101,9 @@ def get_stock_price_history(ticker, start_date, end_date):
             if col not in df.columns:
                 logger.warning(f"Missing expected column {col} for {ticker}")
         
-        # Use lowercase column names for consistency
-        df.columns = [col.lower() for col in df.columns]
-        
+
+        # Convert column names to strings and use lowercase for consistency
+        df.columns = [str(col).lower() for col in df.columns]
         # Rename 'adj close' to 'adj_close' for easier access
         if 'adj close' in df.columns:
             df.rename(columns={'adj close': 'adj_close'}, inplace=True)
