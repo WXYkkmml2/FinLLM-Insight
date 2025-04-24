@@ -536,34 +536,159 @@ def download_annual_reports(stock_list, save_dir, api_key, min_year=2018, max_ye
     return results_df # Return the results DataFrame
 
 
+
+def main():
+    """Main function to run the download process"""
+    # 这个函数是脚本的主要入口，所有核心逻辑都在这里面
+    # 它包含加载配置、设置代理、获取股票列表、调用下载函数等步骤
+
+    parser = argparse.ArgumentParser(description='Download annual reports for US listed companies')
+    parser.add_argument('--config_path', type=str, default='config/config.json',
+                        help='Path to configuration file')
+    parser.add_argument('--max_stocks', type=int, default=0,
+                        help='Maximum number of stocks to process (0 for all)')
+    args = parser.parse_args()
+
+    try:
+        # Load configuration
+        logger.info("Loading configuration")
+        config = load_config(args.config_path)
+
+        # Get API key
+        api_key = config.get('financial_modelling_prep_api_key', '')
+        if not api_key:
+            logger.error("Financial Modeling Prep API key not found in config")
+            return 1
+
+        # >>> 在这里插入读取代理配置并设置环境变量的代码块 <<<
+
+        # 确保 os 库已经被导入 (在文件顶部已经有了)
+        # import os
+
+        http_proxy_url = config.get('http_proxy')
+        https_proxy_url = config.get('https_proxy')
+        # 假设代理认证信息已经包含在 config.json 中的 URL 字符串里
+        # 例如："http_proxy": "http://用户名:密码@代理地址:端口"
+
+        if http_proxy_url:
+            os.environ['HTTP_PROXY'] = http_proxy_url
+            # 可以考虑在日志中隐藏密码部分，这里为了确认是否设置，先显示部分
+            logger.info(f"Setting HTTP_PROXY to {http_proxy_url.split('@')[-1] if '@' in http_proxy_url else http_proxy_url}")
+
+        if https_proxy_url:
+            os.environ['HTTPS_PROXY'] = https_proxy_url
+            # 同样，日志中显示部分或全部，确认是否设置
+            logger.info(f"Setting HTTPS_PROXY to {https_proxy_url.split('@')[-1] if '@' in https_proxy_url else https_proxy_url}")
+
+        # >>> 插入的代码块结束 <<<
+
+
+        # Optional: Proxy test code - uncomment to enable
+        # logger.info("--- Testing Proxy Setting ---")
+        # try:
+        #     test_url = 'https://httpbin.org/ip'
+        #     logger.info(f"Attempting to fetch external IP via: {test_url}")
+        #     test_response = requests.get(test_url, timeout=10)
+        #     if test_response.status_code == 200:
+        #         external_ip_info = test_response.json()
+        #         external_ip = external_ip_info.get('origin', 'N/A')
+        #         logger.info(f"Request originated from IP: {external_ip}")
+        #         # Add a small sleep to avoid immediate next request
+        #         time.sleep(1)
+        #     else:
+        #         logger.error(f"Proxy test failed. Status code: {test_response.status_code}")
+        #         logger.error(f"Proxy test response: {test_response.text[:500]}") # Log beginning of response
+        # except requests.exceptions.RequestException as e:
+        #     logger.error(f"Error during proxy test request: {e}")
+        # finally:
+        #     logger.info("--- Proxy Test Complete ---")
+
+
+        # Get stock list
+        logger.info("Getting stock list")
+        index_name = config.get('us_stock_index', 'S&P500')
+        max_stocks = args.max_stocks if args.max_stocks > 0 else config.get('max_stocks', 50)
+        stock_list = get_stock_list(index_name, max_stocks)
+
+        if len(stock_list) == 0:
+            logger.error("Failed to get stock list")
+            return 1
+
+        # Set parameters
+        # Adjust save_dir to be relative to project_root if needed
+        save_dir = config.get('annual_reports_html_save_directory', 'data/raw/annual_reports') # Default relative path
+        min_year = config.get('min_year', 2018)
+        max_year = config.get('max_year', None)
+        # Get the main delay between reports from config
+        delay_between_reports = config.get('download_delay', 60) # Use a higher default here
+
+
+        # Download annual reports
+        logger.info(f"Starting download of annual reports for years {min_year}-{max_year or 'current'}")
+        # Pass the main delay to download_annual_reports
+        download_annual_reports(
+            stock_list=stock_list,
+            save_dir=save_dir, # Pass the potentially relative save_dir
+            api_key=api_key,
+            min_year=min_year,
+            max_year=max_year,
+            delay=delay_between_reports, # This is the main delay between reports
+            max_stocks=max_stocks
+        )
+
+        logger.info("Annual report download process finished.") # Moved this log message
+
+        return 0 # Exit code 0 for success
+
+    except Exception as e:
+        logger.error(f"An error occurred during script execution: {e}", exc_info=True) # Log traceback
+        return 1 # Exit code 1 for error
+
+
 # --- Main Execution ---
+# This block checks if the script is run directly and calls the main function
 if __name__ == "__main__":
-    # Ensure config directory exists if not using default path and running from project root
-    default_config_dir = os.path.join(project_root, 'config')
-    os.makedirs(default_config_dir, exist_ok=True)
-    default_config_path = os.path.join(default_config_dir, 'config.json')
+    # Note: The placeholder config creation was moved here from the end of main
+    # because it's part of the initial setup before main logic runs.
+
+    # Ensure config directory exists relative to the assumed project root
+    # project_root is defined at the top of the script
+    config_dir = os.path.join(project_root, 'config')
+    os.makedirs(config_dir, exist_ok=True)
+    config_path_in_project = os.path.join(config_dir, 'config.json')
+
 
     # Create a placeholder config if it doesn't exist, to guide the user
-    if not os.path.exists(default_config_path):
-        logger.warning(f"Default config file not found at {default_config_path}. Creating a placeholder.")
+    # Use config_path_in_project for the check and creation
+    if not os.path.exists(config_path_in_project):
+        logger.warning(f"Default config file not found at {config_path_in_project}. Creating a placeholder.")
         placeholder_config = {
-          "financial_modelling_prep_api_key": "YOUR_API_KEY_HERE",
+          "financial_modelling_prep_api_key": "YOUR_API_KEY_HERE", # <<--- IMPORTANT: Replace with your actual key
           "us_stock_index": "S&P500",
-          "max_stocks": 5,
-          "annual_reports_html_save_directory": "data/raw/annual_reports", # Relative to project root
-          "min_year": 2020,
-          "max_year": 2025,
-          "download_delay": 60, # Delay in seconds BETWEEN processing each report
-          "http_proxy": "", # Add your proxy here, e.g., "http://user:pass@host:port"
-          "https_proxy": "" # Add your proxy here, usually the same as http_proxy
+          "max_stocks": 5, # Set to 0 for all stocks in the index
+          "annual_reports_html_save_directory": "data/raw/annual_reports", # <<--- IMPORTANT: This is relative to the assumed project root!
+          "min_year": 2018,
+          "max_year": None, # Set to a specific year like 2023 or 2024, or None for current
+          "download_delay": 60, # <<--- IMPORTANT: Delay in seconds *between processing each report*. Set high for SEC.gov (e.g., 60+)
+          "download_file_initial_retry_delay": 10, # Delay for retries on the *same* URL within download_file
+          "http_proxy": "", # <<--- IMPORTANT: Add your proxy here, e.g., "http://user:pass@host:port"
+          "https_proxy": "" # <<--- IMPORTANT: Add your proxy here, usually the same as http_proxy
         }
         try:
-            with open(default_config_path, 'w', encoding='utf-8') as f:
+            with open(config_path_in_project, 'w', encoding='utf-8') as f:
                 json.dump(placeholder_config, f, indent=4)
-            logger.info(f"Placeholder config created at {default_config_path}. Please edit it with your API key and proxy.")
+            logger.info(f"Placeholder config created at {config_path_in_project}. Please edit it with your API key and proxy!")
+            # Exit after creating placeholder so user edits it
+            # sys.exit(0) # Uncomment this line if you want the script to stop after creating config
+
         except Exception as e:
              logger.error(f"Failed to create placeholder config file: {e}")
+             # Continue execution, but config loading will likely fail
 
+    # Note: main() expects the config path relative to the project root for loading
+    # We are passing the default path 'config/config.json' to main's argument parser
+    # The load_config function resolves this path relative to the project_root
 
     # Run the main function
-    sys.exit(main())
+    # The proxy environment variables are set *inside* the main function after config is loaded
+    sys.exit(main()) # Call the main function to start the process
