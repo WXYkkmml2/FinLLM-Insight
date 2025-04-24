@@ -3,7 +3,7 @@
 
 """
 Data Acquisition Module for FinLLM-Insight
-This module downloads annual reports (10-K filings) of US listed companies.
+This module downloads annual reports (10-K filings) of US listed companies from SEC.
 """
 import os
 import sys
@@ -119,13 +119,13 @@ def download_file(url, save_path, max_retries=3, initial_delay=2):
     
     return False
 
-def get_stock_list(index_name="S&P500", max_count=500):
+def get_stock_list(index_name="S&P500", max_stocks=50):
     """
     Get US stock list from specified index
     
     Args:
-        index_name (str): Name of the index (e.g., 'S&P500')
-        max_count (int): Maximum number of stocks to include
+        index_name (str): Name of the index (e.g., 'S&P500', 'S&P400', 'S&P600', 'ALL')
+        max_stocks (int): Maximum number of stocks to include (0 for all)
         
     Returns:
         pd.DataFrame: DataFrame containing stock symbols and names
@@ -137,17 +137,17 @@ def get_stock_list(index_name="S&P500", max_count=500):
             # Get S&P 500 components from Wikipedia
             sp500 = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
             stock_list = sp500[0][['Symbol', 'Security']]
-            stock_list.columns = ['code', 'name']
+            stock_list.columns = ['ticker', 'company_name']
         elif index_name == "S&P400":
             # Get S&P 400 components from Wikipedia
             sp400 = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_400_companies')
             stock_list = sp400[0][['Symbol', 'Security']]
-            stock_list.columns = ['code', 'name']
+            stock_list.columns = ['ticker', 'company_name']
         elif index_name == "S&P600":
             # Get S&P 600 components from Wikipedia
             sp600 = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_600_companies')
             stock_list = sp600[0][['Symbol', 'Security']]
-            stock_list.columns = ['code', 'name']
+            stock_list.columns = ['ticker', 'company_name']
         elif index_name == "ALL":
             # Combine S&P 500, 400, and 600 for a broader list
             logger.info("Getting combined stock list from S&P 500, 400, and 600")
@@ -160,23 +160,23 @@ def get_stock_list(index_name="S&P500", max_count=500):
             sp600_list = sp600[0][['Symbol', 'Security']]
             
             stock_list = pd.concat([sp500_list, sp400_list, sp600_list], ignore_index=True)
-            stock_list.columns = ['code', 'name']
-            stock_list = stock_list.drop_duplicates(subset=['code'])
+            stock_list.columns = ['ticker', 'company_name']
+            stock_list = stock_list.drop_duplicates(subset=['ticker'])
             
         else:
             # Default to S&P 500 if index name is not recognized
             logger.warning(f"Unknown index: {index_name}, defaulting to S&P500")
             sp500 = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
             stock_list = sp500[0][['Symbol', 'Security']]
-            stock_list.columns = ['code', 'name']
+            stock_list.columns = ['ticker', 'company_name']
         
         # Clean ticker symbols (remove dot notation in favor of dash)
-        stock_list['code'] = stock_list['code'].str.replace('.', '-')
+        stock_list['ticker'] = stock_list['ticker'].str.replace('.', '-')
         
         # Limit number of stocks if specified
-        if max_count > 0 and max_count < len(stock_list):
-            logger.info(f"Limiting to {max_count} stocks")
-            stock_list = stock_list.head(max_count)
+        if max_stocks > 0 and max_stocks < len(stock_list):
+            logger.info(f"Limiting to {max_stocks} stocks")
+            stock_list = stock_list.head(max_stocks)
         
         logger.info(f"Successfully retrieved {len(stock_list)} stocks")
         return stock_list
@@ -186,34 +186,37 @@ def get_stock_list(index_name="S&P500", max_count=500):
         
         # Return a minimal default list to allow code to continue
         default_stocks = pd.DataFrame({
-            'code': ['AAPL', 'MSFT', 'AMZN', 'GOOGL', 'META'],
-            'name': ['Apple Inc.', 'Microsoft Corporation', 'Amazon.com Inc.', 'Alphabet Inc.', 'Meta Platforms Inc.']
+            'ticker': ['AAPL', 'MSFT', 'AMZN', 'GOOGL', 'META'],
+            'company_name': ['Apple Inc.', 'Microsoft Corporation', 'Amazon.com Inc.', 'Alphabet Inc.', 'Meta Platforms Inc.']
         })
         logger.info(f"Using default stock list with {len(default_stocks)} stocks")
         return default_stocks
 
-def get_annual_reports(stock_code, api_key, years=None):
+def get_annual_reports(ticker, api_key, min_year=2018, max_year=None):
     """
     Get annual report information for a specific stock using Financial Modeling Prep API
     
     Args:
-        stock_code (str): Stock symbol
+        ticker (str): Stock symbol
         api_key (str): Financial Modeling Prep API key
-        years (list): List of years to get reports for, or None for recent years
+        min_year (int): Minimum year to fetch reports for
+        max_year (int): Maximum year to fetch reports for (None for current year)
         
     Returns:
         pd.DataFrame: DataFrame with annual report information
     """
-    logger.info(f"Getting 10-K reports for {stock_code}")
+    logger.info(f"Getting 10-K reports for {ticker}")
     
-    # Set default year range (last 5 years) if not specified
-    if years is None:
-        current_year = datetime.now().year
-        years = list(range(current_year-5, current_year+1))
+    # Set default max year to current year if not specified
+    if max_year is None:
+        max_year = datetime.now().year
+    
+    # Create year range
+    years = list(range(min_year, max_year + 1))
     
     try:
         # Construct API URL
-        fmp_url = f"https://financialmodelingprep.com/api/v3/sec_filings/{stock_code}?type=10-K&page=0&apikey={api_key}"
+        fmp_url = f"https://financialmodelingprep.com/api/v3/sec_filings/{ticker}?type=10-K&page=0&apikey={api_key}"
         
         # Make API request
         response = requests.get(fmp_url, timeout=10)
@@ -240,7 +243,7 @@ def get_annual_reports(stock_code, api_key, years=None):
                 year = int(date_string[:4])
                 
                 # Skip if not in requested years
-                if year not in years:
+                if year < min_year or year > max_year:
                     continue
                 
                 link = report.get('finalLink', '')
@@ -248,9 +251,9 @@ def get_annual_reports(stock_code, api_key, years=None):
                     continue
                 
                 reports.append({
-                    'stock_code': stock_code,
+                    'ticker': ticker,
                     'year': year,
-                    'title': f"{stock_code} {year} Annual Report (10-K)",
+                    'title': f"{ticker} {year} Annual Report (10-K)",
                     'url': link,
                     'filing_date': date
                 })
@@ -261,55 +264,19 @@ def get_annual_reports(stock_code, api_key, years=None):
         # Create DataFrame
         if reports:
             df = pd.DataFrame(reports)
-            logger.info(f"Found {len(df)} 10-K reports for {stock_code}")
+            logger.info(f"Found {len(df)} 10-K reports for {ticker}")
             return df
         else:
-            logger.warning(f"No 10-K reports found for {stock_code}")
-            
-            # Create dummy entry for each year
-            dummy_reports = []
-            for year in years:
-                dummy_reports.append({
-                    'stock_code': stock_code,
-                    'year': year,
-                    'title': f"{stock_code} {year} Annual Report (10-K)",
-                    'url': '',
-                    'filing_date': f"{year}-12-31"
-                })
-            
-            return pd.DataFrame(dummy_reports)
+            logger.warning(f"No 10-K reports found for {ticker}")
+            return pd.DataFrame()
     
     except requests.exceptions.RequestException as e:
-        logger.error(f"API request failed for {stock_code}: {e}")
-        
-        # Create dummy entries for all requested years
-        dummy_reports = []
-        for year in years:
-            dummy_reports.append({
-                'stock_code': stock_code,
-                'year': year,
-                'title': f"{stock_code} {year} Annual Report (10-K)",
-                'url': '',
-                'filing_date': f"{year}-12-31"
-            })
-        
-        return pd.DataFrame(dummy_reports)
+        logger.error(f"API request failed for {ticker}: {e}")
+        return pd.DataFrame()
     
     except Exception as e:
-        logger.error(f"Error getting annual reports for {stock_code}: {e}")
-        
-        # Create dummy entries for all requested years
-        dummy_reports = []
-        for year in years:
-            dummy_reports.append({
-                'stock_code': stock_code,
-                'year': year,
-                'title': f"{stock_code} {year} Annual Report (10-K)",
-                'url': '',
-                'filing_date': f"{year}-12-31"
-            })
-        
-        return pd.DataFrame(dummy_reports)
+        logger.error(f"Error getting annual reports for {ticker}: {e}")
+        return pd.DataFrame()
 
 def download_annual_reports(stock_list, save_dir, api_key, min_year=2018, max_year=None, delay=2, max_stocks=None):
     """
@@ -334,9 +301,8 @@ def download_annual_reports(stock_list, save_dir, api_key, min_year=2018, max_ye
     if max_year is None:
         max_year = datetime.now().year
     
-    years = list(range(min_year, max_year + 1))
-    
     # Create subdirectory for each year
+    years = list(range(min_year, max_year + 1))
     for year in years:
         year_dir = os.path.join(save_dir, str(year))
         os.makedirs(year_dir, exist_ok=True)
@@ -350,18 +316,34 @@ def download_annual_reports(stock_list, save_dir, api_key, min_year=2018, max_ye
     
     # Process each stock
     for _, row in tqdm(stock_list.iterrows(), total=len(stock_list), desc="Downloading Annual Reports"):
-        stock_code = row['code']
-        stock_name = row['name']
-        logger.info(f"Processing stock: {stock_code} - {stock_name}")
+        ticker = row['ticker']
+        company_name = row['company_name']
+        logger.info(f"Processing stock: {ticker} - {company_name}")
         
         try:
             # Get annual report information
-            annual_reports = get_annual_reports(stock_code, api_key, years)
+            annual_reports = get_annual_reports(ticker, api_key, min_year, max_year)
+            
+            if annual_reports.empty:
+                logger.warning(f"No reports found for {ticker}")
+                # Add empty results for reporting
+                for year in years:
+                    results.append({
+                        'ticker': ticker,
+                        'company_name': company_name,
+                        'year': year,
+                        'file_path': '',
+                        'status': 'no_reports_found'
+                    })
+                continue
             
             # Download reports for each year
-            for year in years:
+            for _, report in annual_reports.iterrows():
+                year = report['year']
+                url = report['url']
+                
                 # Prepare file path
-                filename = f"{stock_code}_{year}_annual_report.html"
+                filename = f"{ticker}_{year}_annual_report.html"
                 year_dir = os.path.join(save_dir, str(year))
                 save_path = os.path.join(year_dir, filename)
                 
@@ -369,49 +351,32 @@ def download_annual_reports(stock_list, save_dir, api_key, min_year=2018, max_ye
                 if os.path.exists(save_path) and os.path.getsize(save_path) > 1024:
                     logger.info(f"File already exists: {save_path}")
                     results.append({
-                        'stock_code': stock_code,
-                        'stock_name': stock_name,
+                        'ticker': ticker,
+                        'company_name': company_name,
                         'year': year,
                         'file_path': save_path,
                         'status': 'existing'
                     })
                     continue
                 
-                # Find report for this year
-                year_report = annual_reports[annual_reports['year'] == year]
-                
-                if year_report.empty or not year_report.iloc[0]['url']:
-                    logger.warning(f"No report URL found for {stock_code} {year}")
-                    results.append({
-                        'stock_code': stock_code,
-                        'stock_name': stock_name,
-                        'year': year,
-                        'file_path': '',
-                        'status': 'no_url'
-                    })
-                    continue
-                
-                # Get URL
-                url = year_report.iloc[0]['url']
-                
                 # Download report
-                logger.info(f"Downloading report for {stock_code} {year}: {url}")
+                logger.info(f"Downloading report for {ticker} {year}: {url}")
                 success = download_file(url, save_path)
                 
                 if success:
-                    logger.info(f"Successfully downloaded report for {stock_code} {year}")
+                    logger.info(f"Successfully downloaded report for {ticker} {year}")
                     results.append({
-                        'stock_code': stock_code,
-                        'stock_name': stock_name,
+                        'ticker': ticker,
+                        'company_name': company_name,
                         'year': year,
                         'file_path': save_path,
                         'status': 'downloaded'
                     })
                 else:
-                    logger.error(f"Failed to download report for {stock_code} {year}")
+                    logger.error(f"Failed to download report for {ticker} {year}")
                     results.append({
-                        'stock_code': stock_code,
-                        'stock_name': stock_name,
+                        'ticker': ticker,
+                        'company_name': company_name,
                         'year': year,
                         'file_path': save_path,
                         'status': 'failed'
@@ -419,15 +384,27 @@ def download_annual_reports(stock_list, save_dir, api_key, min_year=2018, max_ye
                 
                 # Add delay to avoid rate limiting
                 time.sleep(delay)
+            
+            # Add empty results for years without reports
+            report_years = set(annual_reports['year'])
+            for year in years:
+                if year not in report_years:
+                    results.append({
+                        'ticker': ticker,
+                        'company_name': company_name,
+                        'year': year,
+                        'file_path': '',
+                        'status': 'no_report_for_year'
+                    })
         
         except Exception as e:
-            logger.error(f"Error processing {stock_code}: {e}")
+            logger.error(f"Error processing {ticker}: {e}")
             
             # Add error entry for this stock
             for year in years:
                 results.append({
-                    'stock_code': stock_code,
-                    'stock_name': stock_name,
+                    'ticker': ticker,
+                    'company_name': company_name,
                     'year': year,
                     'file_path': '',
                     'status': 'error'
@@ -473,7 +450,8 @@ def main():
         # Get stock list
         logger.info("Getting stock list")
         index_name = config.get('us_stock_index', 'S&P500')
-        stock_list = get_stock_list(index_name)
+        max_stocks = args.max_stocks if args.max_stocks > 0 else config.get('max_stocks', 50)
+        stock_list = get_stock_list(index_name, max_stocks)
         
         if len(stock_list) == 0:
             logger.error("Failed to get stock list")
@@ -484,7 +462,6 @@ def main():
         min_year = config.get('min_year', 2018)
         max_year = config.get('max_year', None)
         delay = config.get('download_delay', 2)
-        max_stocks = args.max_stocks if args.max_stocks > 0 else None
         
         # Download annual reports
         logger.info(f"Starting download of annual reports for years {min_year}-{max_year or 'current'}")
