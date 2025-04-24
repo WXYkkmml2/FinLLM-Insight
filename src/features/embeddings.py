@@ -204,11 +204,12 @@ def create_embedding_function(embedding_model):
         embedding_function: Function to generate embeddings
     """
     try:
-        # Use ChromaDB's built-in SentenceTransformerEmbeddingFunction
+        # Use ChromaDB's built-in HuggingFaceEmbeddingFunction
         from chromadb.utils import embedding_functions
         
         logger.info(f"Creating embedding function for model {embedding_model}")
-        embedding_func = embedding_functions.SentenceTransformerEmbeddingFunction(
+        embedding_func = embedding_functions.HuggingFaceEmbeddingFunction(
+            api_key=os.environ.get("HUGGINGFACE_API_KEY"),
             model_name=embedding_model
         )
         logger.info("Embedding function created successfully")
