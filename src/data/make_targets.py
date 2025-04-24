@@ -203,7 +203,7 @@ def create_report_date_mapping(reports_dir):
         reports_dir (str): 包含报告的目录
         
     Returns:
-        dict: 从股票代码到报告日期的映射
+        dict: 从股票代码到报告日期的映射 {stock_code: {year: date_str}}
     """
     mapping = {}
     
@@ -212,86 +212,88 @@ def create_report_date_mapping(reports_dir):
     if os.path.exists(results_path):
         try:
             results_df = pd.read_csv(results_path, encoding='utf-8-sig')
-            
-            # 打印列名，便于调试
             logger.debug(f"下载结果文件列名: {results_df.columns.tolist()}")
             
             # 定义可能的列名
             stock_code_cols = ['ticker', 'stock_code', 'company_code']
             year_cols = ['year', 'report_year']
-            # 确定实际使用的列名
-            stock_code_col = None
-            for col in stock_code_cols:
-                if col in results_df.columns:
-                    stock_code_col = col
-                    break
+            # 尝试找到 filing_date 列
+            filing_date_cols = ['filing_date', 'date', 'fillingDate'] 
             
-            year_col = None
-            for col in year_cols:
-                if col in results_df.columns:
-                    year_col = col
-                    break
+            # 确定实际使用的列名
+            stock_code_col = next((col for col in stock_code_cols if col in results_df.columns), None)
+            year_col = next((col for col in year_cols if col in results_df.columns), None)
+            filing_date_col = next((col for col in filing_date_cols if col in results_df.columns), None)
             
             if not stock_code_col or not year_col:
                 logger.warning(f"结果文件中找不到股票代码或年份列，可用列: {results_df.columns.tolist()}")
             else:
-                # 按股票代码和年份分组
                 for _, row in results_df.iterrows():
                     if pd.notna(row[stock_code_col]) and pd.notna(row[year_col]):
                         stock_code = row[stock_code_col]
                         try:
                             year = int(row[year_col])
                         except:
-                            year = row[year_col]  # 如果转换失败，直接使用原值
+                            logger.warning(f"无法将年份 {row[year_col]} 转换为整数 for {stock_code}")
+                            continue
                         
-                        # 提取报告日期
-                        if 'file_path' in row and pd.notna(row['file_path']) and os.path.exists(row['file_path']):
-                            file_date = datetime.fromtimestamp(os.path.getmtime(row['file_path']))
-                            
-                            # 结构: {stock_code: {year: date}}
-                            if stock_code not in mapping:
-                                mapping[stock_code] = {}
-                            
-                            # 使用当前时间减去3个月作为报告日期（避免未来日期问题）
-                            # 这是一个变通方法，这样我们就不会有一个未来的报告日期
-                            adjusted_date = datetime.now() - timedelta(days=90)
-                            mapping[stock_code][year] = adjusted_date.strftime('%Y%m%d')
-                            
-                            # Debug log
-                            logger.info(f"Adjusted report date for {stock_code}_{year}: {adjusted_date.strftime('%Y%m%d')}")
+                        report_date_str = None
+                        # 优先使用 filing_date 列
+                        if filing_date_col and pd.notna(row[filing_date_col]):
+                            try:
+                                # 尝试解析日期，假设是 YYYY-MM-DD 或类似格式
+                                report_dt = pd.to_datetime(row[filing_date_col]).to_pydatetime()
+                                report_date_str = report_dt.strftime('%Y%m%d')
+                                logger.debug(f"使用 filing_date {report_date_str} for {stock_code}_{year}")
+                            except Exception as date_err:
+                                logger.warning(f"无法解析 filing_date '{row[filing_date_col]}' for {stock_code}_{year}: {date_err}. 将使用备选日期。")
+                        
+                        # 如果没有有效的 filing_date，使用备选：报告年份的年底
+                        if report_date_str is None:
+                             # 使用报告年份的年底作为备选
+                             # 注意：10-K 通常在财年后提交，所以用 year + 1 的 Q1 可能更准，但年底更简单
+                            fallback_dt = datetime(year, 12, 31)
+                            report_date_str = fallback_dt.strftime('%Y%m%d')
+                            logger.info(f"无法找到或解析 filing_date for {stock_code}_{year}. 使用备选日期: {report_date_str}")
+                        
+                        if stock_code not in mapping:
+                            mapping[stock_code] = {}
+                        mapping[stock_code][year] = report_date_str
             
+            # 返回从 CSV 文件创建的映射
+            # （即使文件存在但无法使用，也在此处返回，避免执行下面的目录扫描逻辑）
             return mapping
             
         except Exception as e:
             logger.error(f"从结果文件加载报告日期时出错: {e}")
+            # 出错则继续尝试扫描目录
     
-    # 如果没有结果文件或出错，遍历目录
+    # 如果没有结果文件或出错，遍历目录 (作为最终备选)
+    logger.info(f"download_results.csv 未找到或处理失败. 尝试扫描目录 {reports_dir}")
     try:
-        for year in os.listdir(reports_dir):
-            year_dir = os.path.join(reports_dir, year)
-            if os.path.isdir(year_dir) and year.isdigit():
-                year_int = int(year)
+        for year_str in os.listdir(reports_dir):
+            year_dir = os.path.join(reports_dir, year_str)
+            if os.path.isdir(year_dir) and year_str.isdigit():
+                year_int = int(year_str)
                 
                 for file in os.listdir(year_dir):
                     if file.endswith('.html') or file.endswith('.txt'):
-                        # 从文件名提取股票代码（假设格式：stock_code_year_*.html/txt）
                         parts = file.split('_')
                         if len(parts) >= 2:
                             stock_code = parts[0]
                             
-                            # 使用文件修改日期
-                            file_path = os.path.join(year_dir, file)
-                            
-                            # 使用当前时间减去3个月作为报告日期（避免未来日期问题）
-                            adjusted_date = datetime.now() - timedelta(days=90)
+                            # 检查是否已通过 CSV 文件处理过该股票
+                            if stock_code in mapping and year_int in mapping[stock_code]:
+                                continue # 如果已处理，跳过
+                                
+                            # 备选：使用报告年份的年底
+                            fallback_dt = datetime(year_int, 12, 31)
+                            report_date_str = fallback_dt.strftime('%Y%m%d')
+                            logger.info(f"通过扫描目录为 {stock_code}_{year_int} 设置备选日期: {report_date_str}")
                             
                             if stock_code not in mapping:
                                 mapping[stock_code] = {}
-                            
-                            mapping[stock_code][year_int] = adjusted_date.strftime('%Y%m%d')
-                            
-                            # Debug log
-                            logger.info(f"Adjusted report date for {stock_code}_{year_int}: {adjusted_date.strftime('%Y%m%d')}")
+                            mapping[stock_code][year_int] = report_date_str
         
         return mapping
     
