@@ -449,7 +449,7 @@ def main():
         save_dir = config.get('annual_reports_html_save_directory', './data/raw/annual_reports')
         min_year = config.get('min_year', 2018)
         max_year = config.get('max_year', None)
-        delay = config.get('download_delay', 2)
+        delay = config.get('download_delay', 10)
         
         # Download annual reports
         logger.info(f"Starting download of annual reports for years {min_year}-{max_year or 'current'}")
