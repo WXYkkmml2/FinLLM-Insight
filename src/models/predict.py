@@ -18,6 +18,7 @@ import pickle
 import matplotlib.pyplot as plt
 import seaborn as sns
 from tqdm import tqdm
+from sklearn.preprocessing import OneHotEncoder
 
 # Configure logging
 logging.basicConfig(
@@ -185,6 +186,21 @@ def make_predictions(model, features_df, model_info=None):
         
         # Handle missing values
         X = X.fillna(X.mean())
+        
+        # Encode categorical features if present
+        categorical_features = [col for col in X.columns if col.endswith('_category')]
+        if categorical_features:
+            logger.info(f"Encoding {len(categorical_features)} categorical features")
+            encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=False)
+            encoded_features = encoder.fit_transform(X[categorical_features])
+            encoded_feature_names = encoder.get_feature_names_out(categorical_features)
+            
+            # Create DataFrame with encoded features
+            encoded_df = pd.DataFrame(encoded_features, columns=encoded_feature_names, index=X.index)
+            
+            # Drop original categorical columns and add encoded ones
+            X = X.drop(columns=categorical_features)
+            X = pd.concat([X, encoded_df], axis=1)
         
         # Make predictions
         predictions = model.predict(X)
