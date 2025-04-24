@@ -169,24 +169,14 @@ def connect_to_vector_db(embeddings_dir, embedding_model):
         # Load config
         config = load_config('config/config.json')
         
-        if embedding_model.lower() == "openai":
-            # Use OpenAI's embeddings
-            openai_ef = embedding_functions.OpenAIEmbeddingFunction(
-                api_key=os.environ.get("OPENAI_API_KEY"),
-                model_name="text-embedding-ada-002"
-            )
-            embedding_func = openai_ef
-        else:
-            # Use Hugging Face models
-            huggingface_ef = embedding_functions.HuggingFaceEmbeddingFunction(
-                api_key=config.get("huggingface_api_key"),
-                model_name=embedding_model
-            )
-            embedding_func = huggingface_ef
+        # Use SentenceTransformerEmbeddingFunction
+        embedding_func = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name=embedding_model
+        )
         
         # Create client with new API
         db_path = os.path.join(embeddings_dir, "chroma_db")
-        client = chromadb.Client()
+        client = chromadb.PersistentClient(path=db_path)
         
         return client, embedding_func
     
