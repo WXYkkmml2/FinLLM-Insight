@@ -260,7 +260,8 @@ def process_reports(text_dir, output_dir, embedding_model, chunk_size=1000, chun
         'total_files': len(report_files),
         'total_chunks': 0,
         'processed_files': 0,
-        'error_files': 0
+        'error_files': 0,
+        'skipped_files': 0
     }
     
     for file_path in tqdm(report_files, desc="Processing reports"):
@@ -277,9 +278,17 @@ def process_reports(text_dir, output_dir, embedding_model, chunk_size=1000, chun
             try:
                 collection = client.get_collection(name=collection_name, embedding_function=embedding_func)
                 logger.info(f"Using existing collection for {company_code}")
-            except:
+                
+                # Check if document for this year already exists
+                existing_docs = collection.get(where={"year": year})
+                if existing_docs and len(existing_docs['ids']) > 0:
+                    logger.info(f"Skipping {company_code} {year} - already processed")
+                    stats['skipped_files'] += 1
+                    continue
+                    
+            except Exception as e:
+                logger.info(f"Creating new collection for {company_code}")
                 collection = client.create_collection(name=collection_name, embedding_function=embedding_func)
-                logger.info(f"Created new collection for {company_code}")
             
             # Load and split text
             text = load_report_text(file_path)
