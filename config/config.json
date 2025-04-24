@@ -11,7 +11,7 @@
     "min_year": 2018,
     "max_year": 2023,
     "max_stocks": 50,
-    "download_delay": 30,
+    "download_delay": 2,
     "pdf_extraction_method": "pdfplumber",
     "price_start_date": "20180101",
     "price_end_date": null,
