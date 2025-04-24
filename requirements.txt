@@ -1,19 +1,19 @@
-#  python-dotenv 依赖
+# 基础依赖
 python-dotenv>=0.19.0
-# 数据处理
 pandas>=1.3.0
 numpy>=1.20.0
 tqdm>=4.61.0
 
 # 数据获取
-yfinance>=0.2.12  # 用于获取美股历史价格数据
+yfinance>=0.2.12
 requests>=2.25.1
-beautifulsoup4>=4.9.3  # 用于解析HTML文件
+beautifulsoup4>=4.9.3
+akshare>=1.0.0
 
 # 文件处理
 PyPDF2>=2.10.0
 pdfplumber>=0.7.0
-lxml>=4.9.0  # 用于高效HTML解析
+lxml>=4.9.0
 
 # 机器学习
 scikit-learn>=1.0.0
@@ -31,19 +31,10 @@ chromadb>=0.3.0
 # LLM 接口
 openai>=0.27.0
 
-# 数据可视化
-matplotlib>=3.5.0
-seaborn>=0.11.0
-
 # 自然语言处理
 langchain>=0.0.200
 langchain-community>=0.0.1
 
-# 日志和配置
-python-dotenv>=0.19.0
-
-# 开发工具
-pytest>=7.0.0
-black>=22.0.0
-flake8>=4.0.0
-mypy>=0.910
+# 数据可视化
+matplotlib>=3.5.0
+seaborn>=0.11.0
