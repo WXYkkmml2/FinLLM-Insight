@@ -238,6 +238,9 @@ def process_reports_parallel(text_dir, output_dir, embedding_model, chunk_size=1
             if file.endswith('.txt'):
                 report_files.append(os.path.join(root, file))
     
+    # 用于存储处理结果的列表
+    results = []
+    
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_file = {executor.submit(process_single_report, file_path, client, embedding_func, chunk_size, chunk_overlap, batch_size): file_path 
                          for file_path in report_files}
@@ -246,9 +249,16 @@ def process_reports_parallel(text_dir, output_dir, embedding_model, chunk_size=1
             file_path = future_to_file[future]
             try:
                 result = future.result()
-                # 处理结果...
+                # 将处理结果添加到结果列表
+                results.append(result)
             except Exception as e:
                 logger.error(f"处理文件 {file_path} 时出错: {e}")
+                # 添加错误记录到结果列表
+                results.append({
+                    "status": "error",
+                    "file": file_path,
+                    "error": str(e)
+                })
     
     # Calculate statistics
     total_chunks = sum(1 for r in results if r.get("status") == "success")
