@@ -155,62 +155,73 @@ def preprocess_data(df, target_column, test_size=0.2, random_state=42):
         tuple: (X_train, X_test, y_train, y_test, feature_names)
     """
     try:
-        # Remove rows with missing target
+        # 检查目标列是否存在
+        if target_column not in df.columns:
+            raise ValueError(f"目标列 {target_column} 不存在")
+        
+        # 移除目标值为空的行
         df = df.dropna(subset=[target_column])
+        logger.info(f"移除目标值为空的行后: {df.shape[0]}行")
         
-        # Define feature columns - numeric scores from LLM
+        # 定义特征列 - LLM 生成的数值分数
         numeric_features = [col for col in df.columns if col.endswith('_score')]
+        logger.info(f"找到 {len(numeric_features)} 个数值特征: {numeric_features}")
         
-        # Define categorical features
+        # 定义分类特征
         categorical_features = [col for col in df.columns if col.endswith('_category')]
+        logger.info(f"找到 {len(categorical_features)} 个分类特征: {categorical_features}")
         
-        # Combined features
+        # 组合特征
         feature_columns = numeric_features + categorical_features
         
-        # Check if we have features
+        # 检查是否有特征
         if not feature_columns:
-            logger.error("No feature columns identified. Check feature naming patterns.")
-            raise ValueError("No feature columns found")
+            logger.error("没有找到特征列。请检查特征命名模式。")
+            raise ValueError("没有找到特征列")
         
-        # Create feature matrix and target vector
+        # 创建特征矩阵和目标向量
         X = df[feature_columns].copy()
         y = df[target_column].copy()
         
-        # Drop rows with missing features
+        # 移除特征值为空的行
         missing_mask = X.isnull().any(axis=1)
         if missing_mask.sum() > 0:
-            logger.warning(f"Dropping {missing_mask.sum()} rows with missing features")
+            logger.warning(f"移除 {missing_mask.sum()} 行特征值为空的数据")
             X = X[~missing_mask]
             y = y[~missing_mask]
         
-        # Encode categorical features
+        # 编码分类特征
         if categorical_features:
-            logger.info(f"Encoding {len(categorical_features)} categorical features")
+            logger.info(f"编码 {len(categorical_features)} 个分类特征")
             encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=False)
             encoded_features = encoder.fit_transform(X[categorical_features])
             encoded_feature_names = encoder.get_feature_names_out(categorical_features)
             
-            # Create DataFrame with encoded features
+            # 创建包含编码特征的 DataFrame
             encoded_df = pd.DataFrame(encoded_features, columns=encoded_feature_names, index=X.index)
             
-            # Drop original categorical columns and add encoded ones
+            # 删除原始分类列并添加编码后的列
             X = X.drop(columns=categorical_features)
             X = pd.concat([X, encoded_df], axis=1)
             
-            # Update feature columns list
+            # 更新特征列列表
             feature_columns = numeric_features + list(encoded_feature_names)
         
-        # Split data
+        # 检查数据量是否足够
+        if len(X) < 10:
+            logger.warning(f"数据量太少（{len(X)}个样本），建议增加数据量")
+        
+        # 分割数据
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=test_size, random_state=random_state
         )
         
-        logger.info(f"Training data: {X_train.shape[0]} samples, Test data: {X_test.shape[0]} samples")
+        logger.info(f"训练数据: {X_train.shape[0]}个样本, 测试数据: {X_test.shape[0]}个样本")
         
         return X_train, X_test, y_train, y_test, feature_columns
     
     except Exception as e:
-        logger.error(f"Error preprocessing data: {e}")
+        logger.error(f"预处理数据时出错: {e}")
         raise
 
 def create_pipeline(model_type='regression', model_name='random_forest'):
@@ -240,44 +251,56 @@ def create_pipeline(model_type='regression', model_name='random_forest'):
                 model = LinearRegression()
             elif model_name == 'random_forest':
                 model = RandomForestRegressor(
-                    n_estimators=100,
-                    max_depth=20,
-                    min_samples_split=5,
-                    random_state=42
+                    n_estimators=200,  # 增加树的数量
+                    max_depth=4,      # 增加树的深度
+                    min_samples_split=3,  # 减少分裂所需的最小样本数
+                    min_samples_leaf=2,   # 减少叶节点所需的最小样本数
+                    max_features='sqrt',  # 使用sqrt特征数
+                    bootstrap=True,       # 使用bootstrap采样
+                    random_state=42,
+                    oob_score=True,       # 使用袋外样本评估
+                    n_jobs=-1            # 使用所有CPU核心
                 )
             elif model_name == 'gradient_boosting':
                 model = GradientBoostingRegressor(
-                    n_estimators=100,
-                    max_depth=5,
-                    learning_rate=0.1,
+                    n_estimators=200,  # 增加树的数量
+                    max_depth=4,      # 增加树的深度
+                    learning_rate=0.05,  # 降低学习率
+                    min_samples_split=3,  # 减少分裂所需的最小样本数
+                    min_samples_leaf=2,   # 减少叶节点所需的最小样本数
                     random_state=42
                 )
             else:
-                logger.warning(f"Unknown regression model: {model_name}. Using RandomForest.")
-                model = RandomForestRegressor(n_estimators=100, random_state=42)
+                logger.warning(f"未知的回归模型: {model_name}. 使用 RandomForest.")
+                model = RandomForestRegressor(n_estimators=200, random_state=42)
         
         elif model_type == 'classification':
             if model_name == 'logistic':
                 model = LogisticRegression(max_iter=1000, random_state=42)
             elif model_name == 'random_forest':
                 model = RandomForestClassifier(
-                    n_estimators=100,
-                    max_depth=20,
-                    min_samples_split=5,
-                    random_state=42
+                    n_estimators=200,  # 增加树的数量
+                    max_depth=4,      # 增加树的深度
+                    min_samples_split=3,  # 减少分裂所需的最小样本数
+                    min_samples_leaf=2,   # 减少叶节点所需的最小样本数
+                    max_features='sqrt',  # 使用sqrt特征数
+                    bootstrap=True,       # 使用bootstrap采样
+                    random_state=42,
+                    oob_score=True,       # 使用袋外样本评估
+                    n_jobs=-1            # 使用所有CPU核心
                 )
             else:
-                logger.warning(f"Unknown classification model: {model_name}. Using RandomForest.")
-                model = RandomForestClassifier(n_estimators=100, random_state=42)
+                logger.warning(f"未知的分类模型: {model_name}. 使用 RandomForest.")
+                model = RandomForestClassifier(n_estimators=200, random_state=42)
         
         else:
-            logger.error(f"Unknown model type: {model_type}")
-            raise ValueError(f"Unknown model type: {model_type}")
+            logger.error(f"未知的模型类型: {model_type}")
+            raise ValueError(f"未知的模型类型: {model_type}")
         
         return model
     
     except Exception as e:
-        logger.error(f"Error creating pipeline: {e}")
+        logger.error(f"创建管道时出错: {e}")
         raise
 
 def train_model(X_train, y_train, model, cv=2):
@@ -294,18 +317,32 @@ def train_model(X_train, y_train, model, cv=2):
         tuple: (trained_model, cv_scores)
     """
     try:
-        # Perform cross-validation
-        cv_scores = cross_val_score(model, X_train, y_train, cv=cv, scoring='r2')
-        logger.info(f"Cross-validation R² scores: {cv_scores}")
-        logger.info(f"Mean CV R² score: {cv_scores.mean():.4f} ± {cv_scores.std():.4f}")
+        # 检查数据量
+        if len(X_train) < 10:
+            logger.warning(f"训练数据量太少（{len(X_train)}个样本），建议增加数据量")
+            # 如果数据量太少，不使用交叉验证
+            model.fit(X_train, y_train)
+            return model, np.array([0.0])
         
-        # Train model on full training set
+        # 根据数据量调整交叉验证折数
+        cv = min(cv, len(X_train) // 2)
+        if cv < 2:
+            logger.warning("数据量太少，不使用交叉验证")
+            model.fit(X_train, y_train)
+            return model, np.array([0.0])
+        
+        # 执行交叉验证
+        cv_scores = cross_val_score(model, X_train, y_train, cv=cv, scoring='r2')
+        logger.info(f"交叉验证 R² 分数: {cv_scores}")
+        logger.info(f"平均 CV R² 分数: {cv_scores.mean():.4f} ± {cv_scores.std():.4f}")
+        
+        # 在完整训练集上训练模型
         model.fit(X_train, y_train)
         
         return model, cv_scores
     
     except Exception as e:
-        logger.error(f"Error training model: {e}")
+        logger.error(f"训练模型时出错: {e}")
         raise
 
 def evaluate_model(model, X_test, y_test, model_type='regression'):
@@ -322,22 +359,46 @@ def evaluate_model(model, X_test, y_test, model_type='regression'):
         dict: Performance metrics
     """
     try:
-        # Make predictions
+        # 检查数据量
+        if len(X_test) < 2:
+            logger.warning(f"测试数据量太少（{len(X_test)}个样本），无法计算评估指标")
+            return {
+                'mse': np.nan,
+                'rmse': np.nan,
+                'mae': np.nan,
+                'r2': np.nan
+            }
+        
+        # 进行预测
         y_pred = model.predict(X_test)
         
-        # Calculate metrics
+        # 计算指标
         metrics = {}
         
         if model_type == 'regression':
+            # 计算基本指标
             metrics['mse'] = mean_squared_error(y_test, y_pred)
             metrics['rmse'] = np.sqrt(metrics['mse'])
             metrics['mae'] = mean_absolute_error(y_test, y_pred)
-            metrics['r2'] = r2_score(y_test, y_pred)
             
-            logger.info(f"Test MSE: {metrics['mse']:.4f}")
-            logger.info(f"Test RMSE: {metrics['rmse']:.4f}")
-            logger.info(f"Test MAE: {metrics['mae']:.4f}")
-            logger.info(f"Test R²: {metrics['r2']:.4f}")
+            # 对于小数据集，使用更稳健的R²计算
+            if len(y_test) < 10:
+                # 使用调整后的R²
+                n = len(y_test)
+                p = X_test.shape[1]
+                r2 = r2_score(y_test, y_pred)
+                metrics['r2'] = 1 - (1 - r2) * (n - 1) / (n - p - 1)
+            else:
+                metrics['r2'] = r2_score(y_test, y_pred)
+            
+            # 添加相对误差指标
+            metrics['relative_error'] = np.mean(np.abs((y_test - y_pred) / y_test)) * 100
+            
+            logger.info(f"测试 MSE: {metrics['mse']:.4f}")
+            logger.info(f"测试 RMSE: {metrics['rmse']:.4f}")
+            logger.info(f"测试 MAE: {metrics['mae']:.4f}")
+            logger.info(f"测试 R²: {metrics['r2']:.4f}")
+            logger.info(f"相对误差: {metrics['relative_error']:.2f}%")
         
         elif model_type == 'classification':
             metrics['accuracy'] = accuracy_score(y_test, y_pred)
@@ -346,15 +407,15 @@ def evaluate_model(model, X_test, y_test, model_type='regression'):
             metrics['f1'] = f1_score(y_test, y_pred, average='weighted')
             metrics['confusion_matrix'] = confusion_matrix(y_test, y_pred)
             
-            logger.info(f"Test Accuracy: {metrics['accuracy']:.4f}")
-            logger.info(f"Test Precision: {metrics['precision']:.4f}")
-            logger.info(f"Test Recall: {metrics['recall']:.4f}")
-            logger.info(f"Test F1: {metrics['f1']:.4f}")
+            logger.info(f"测试准确率: {metrics['accuracy']:.4f}")
+            logger.info(f"测试精确率: {metrics['precision']:.4f}")
+            logger.info(f"测试召回率: {metrics['recall']:.4f}")
+            logger.info(f"测试 F1: {metrics['f1']:.4f}")
         
         return metrics, y_pred
     
     except Exception as e:
-        logger.error(f"Error evaluating model: {e}")
+        logger.error(f"评估模型时出错: {e}")
         raise
 
 def feature_importance_analysis(model, feature_names, output_dir):
@@ -367,11 +428,11 @@ def feature_importance_analysis(model, feature_names, output_dir):
         output_dir (str): Directory to save plots
     """
     try:
-        # Create visualization directory
+        # 创建可视化目录
         viz_dir = os.path.join(output_dir, 'visualizations')
         os.makedirs(viz_dir, exist_ok=True)
         
-        # Get feature importance
+        # 获取特征重要性
         if hasattr(model, 'feature_importances_'):
             importance = model.feature_importances_
         elif hasattr(model, 'coef_'):
@@ -379,36 +440,59 @@ def feature_importance_analysis(model, feature_names, output_dir):
             if len(importance.shape) > 1:
                 importance = importance.mean(axis=0)
         else:
-            logger.warning("Model doesn't provide feature importance information")
-            return
+            logger.warning("模型不提供特征重要性信息")
+            return None
         
-        # Create feature importance DataFrame
+        # 创建特征重要性 DataFrame
         importance_df = pd.DataFrame({
             'Feature': feature_names,
             'Importance': importance
         })
         
-        # Sort by importance
+        # 按重要性排序
         importance_df = importance_df.sort_values('Importance', ascending=False)
         
-        # Save to CSV
+        # 保存到 CSV
         importance_path = os.path.join(output_dir, 'feature_importance.csv')
         importance_df.to_csv(importance_path, index=False, encoding='utf-8-sig')
         
-        # Plot feature importance
+        # 绘制特征重要性图
         plt.figure(figsize=(10, 6))
-        plt.title('Feature Importance')
+        plt.title('特征重要性')
         sns.barplot(x='Importance', y='Feature', data=importance_df.head(15))
         plt.tight_layout()
         plt.savefig(os.path.join(viz_dir, 'feature_importance.png'))
         plt.close()
         
-        logger.info(f"Feature importance analysis complete. Results saved to {importance_path}")
+        # 绘制特征重要性分布图
+        plt.figure(figsize=(10, 6))
+        plt.title('特征重要性分布')
+        sns.histplot(importance_df['Importance'], bins=20)
+        plt.xlabel('重要性')
+        plt.ylabel('特征数量')
+        plt.tight_layout()
+        plt.savefig(os.path.join(viz_dir, 'feature_importance_distribution.png'))
+        plt.close()
+        
+        # 绘制特征重要性累积图
+        plt.figure(figsize=(10, 6))
+        plt.title('特征重要性累积')
+        cumulative_importance = np.cumsum(importance_df['Importance'])
+        plt.plot(range(1, len(cumulative_importance) + 1), cumulative_importance)
+        plt.xlabel('特征数量')
+        plt.ylabel('累积重要性')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(viz_dir, 'feature_importance_cumulative.png'))
+        plt.close()
+        
+        logger.info(f"特征重要性分析完成。结果保存到 {importance_path}")
         
         return importance_df
     
     except Exception as e:
-        logger.error(f"Error analyzing feature importance: {e}")
+        logger.error(f"分析特征重要性时出错: {e}")
+        return None
 
 def create_prediction_vs_actual_plot(y_test, y_pred, output_dir):
     """
@@ -420,33 +504,61 @@ def create_prediction_vs_actual_plot(y_test, y_pred, output_dir):
         output_dir (str): Directory to save plot
     """
     try:
-        # Create visualization directory
+        # 创建可视化目录
         viz_dir = os.path.join(output_dir, 'visualizations')
         os.makedirs(viz_dir, exist_ok=True)
         
-        # Create scatter plot
+        # 创建散点图
         plt.figure(figsize=(10, 6))
         plt.scatter(y_test, y_pred, alpha=0.5)
         
-        # Add perfect prediction line
+        # 添加完美预测线
         min_val = min(y_test.min(), y_pred.min())
         max_val = max(y_test.max(), y_pred.max())
         plt.plot([min_val, max_val], [min_val, max_val], 'r--')
         
-        plt.title('Predicted vs. Actual Values')
-        plt.xlabel('Actual')
-        plt.ylabel('Predicted')
+        plt.title('预测值 vs. 实际值')
+        plt.xlabel('实际值')
+        plt.ylabel('预测值')
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
         
-        # Save plot
+        # 保存散点图
         plt.savefig(os.path.join(viz_dir, 'predicted_vs_actual.png'))
         plt.close()
         
-        logger.info(f"Prediction vs. actual plot saved to {viz_dir}")
+        # 创建残差图
+        residuals = y_test - y_pred
+        plt.figure(figsize=(10, 6))
+        plt.scatter(y_pred, residuals, alpha=0.5)
+        plt.axhline(y=0, color='r', linestyle='--')
+        plt.title('残差图')
+        plt.xlabel('预测值')
+        plt.ylabel('残差')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        
+        # 保存残差图
+        plt.savefig(os.path.join(viz_dir, 'residuals.png'))
+        plt.close()
+        
+        # 创建残差分布图
+        plt.figure(figsize=(10, 6))
+        sns.histplot(residuals, bins=20)
+        plt.title('残差分布')
+        plt.xlabel('残差')
+        plt.ylabel('频率')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        
+        # 保存残差分布图
+        plt.savefig(os.path.join(viz_dir, 'residuals_distribution.png'))
+        plt.close()
+        
+        logger.info(f"预测 vs. 实际值图保存到 {viz_dir}")
     
     except Exception as e:
-        logger.error(f"Error creating prediction vs. actual plot: {e}")
+        logger.error(f"创建预测 vs. 实际值图时出错: {e}")
 
 def save_model(model, model_info, output_dir, model_name='model'):
     """
@@ -459,18 +571,18 @@ def save_model(model, model_info, output_dir, model_name='model'):
         model_name (str): Base name for model files
     """
     try:
-        # Create output directory if it doesn't exist
+        # 创建输出目录
         os.makedirs(output_dir, exist_ok=True)
         
-        # Save model
+        # 保存模型
         model_path = os.path.join(output_dir, f"{model_name}.pkl")
         with open(model_path, 'wb') as f:
             pickle.dump(model, f)
         
-        # Save model info
+        # 保存模型信息
         info_path = os.path.join(output_dir, f"{model_name}_info.json")
         
-        # Convert numpy values to Python native types for JSON serialization
+        # 将 numpy 值转换为 Python 原生类型以便 JSON 序列化
         for key, value in model_info.items():
             if isinstance(value, np.ndarray):
                 model_info[key] = value.tolist()
@@ -482,13 +594,29 @@ def save_model(model, model_info, output_dir, model_name='model'):
         with open(info_path, 'w', encoding='utf-8') as f:
             json.dump(model_info, f, ensure_ascii=False, indent=2)
         
-        logger.info(f"Model saved to {model_path}")
-        logger.info(f"Model info saved to {info_path}")
+        logger.info(f"模型保存到 {model_path}")
+        logger.info(f"模型信息保存到 {info_path}")
+        
+        # 打印模型信息摘要
+        logger.info("模型信息摘要:")
+        logger.info(f"模型类型: {model_info.get('model_type', '未知')}")
+        logger.info(f"模型名称: {model_info.get('model_name', '未知')}")
+        logger.info(f"目标列: {model_info.get('target_column', '未知')}")
+        logger.info(f"目标窗口: {model_info.get('target_window', '未知')}")
+        logger.info(f"训练样本数: {model_info.get('training_samples', '未知')}")
+        logger.info(f"测试样本数: {model_info.get('test_samples', '未知')}")
+        logger.info(f"特征数量: {model_info.get('feature_count', '未知')}")
+        
+        if 'metrics' in model_info:
+            logger.info("模型指标:")
+            for metric_name, metric_value in model_info['metrics'].items():
+                if isinstance(metric_value, (int, float)):
+                    logger.info(f"{metric_name}: {metric_value:.4f}")
         
         return model_path, info_path
     
     except Exception as e:
-        logger.error(f"Error saving model: {e}")
+        logger.error(f"保存模型时出错: {e}")
         raise
 
 def train_return_prediction_model(features_path, targets_path, output_dir, target_window=60, 
@@ -508,39 +636,42 @@ def train_return_prediction_model(features_path, targets_path, output_dir, targe
         tuple: (model_path, metrics)
     """
     try:
-        # Load and merge data
+        logger.info(f"开始训练模型: {model_type} - {model_name}")
+        logger.info(f"目标窗口: {target_window}天")
+        
+        # 加载并合并数据
         data = load_data(features_path, targets_path)
         
-        # Determine target column based on target_window and model_type
+        # 根据目标窗口和模型类型确定目标列
         if model_type == 'regression':
             target_column = f'future_return_{target_window}d'
         else:
             target_column = f'future_up_{target_window}d'
         
-        logger.info(f"Using target column: {target_column}")
+        logger.info(f"使用目标列: {target_column}")
         
-        # Preprocess data
+        # 预处理数据
         X_train, X_test, y_train, y_test, feature_names = preprocess_data(
             data, target_column, test_size=0.2
         )
         
-        # Create model
+        # 创建模型
         model = create_pipeline(model_type, model_name)
         
-        # Train model
+        # 训练模型
         trained_model, cv_scores = train_model(X_train, y_train, model)
         
-        # Evaluate model
+        # 评估模型
         metrics, y_pred = evaluate_model(trained_model, X_test, y_test, model_type)
         
-        # Feature importance analysis
+        # 特征重要性分析
         importance_df = feature_importance_analysis(trained_model, feature_names, output_dir)
         
-        # Create prediction vs. actual plot (for regression)
+        # 创建预测 vs. 实际值图（仅用于回归）
         if model_type == 'regression':
             create_prediction_vs_actual_plot(y_test, y_pred, output_dir)
         
-        # Save model and results
+        # 保存模型和结果
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         model_file_name = f"{model_type}_{model_name}_{target_window}d_{timestamp}"
         
@@ -565,10 +696,13 @@ def train_return_prediction_model(features_path, targets_path, output_dir, targe
             trained_model, model_info, output_dir, model_file_name
         )
         
+        logger.info(f"模型训练完成。模型保存到 {model_path}")
+        logger.info(f"模型指标: {metrics}")
+        
         return model_path, metrics
     
     except Exception as e:
-        logger.error(f"Error in model training pipeline: {e}")
+        logger.error(f"模型训练过程中出错: {e}")
         raise
 
 def main():
@@ -586,22 +720,30 @@ def main():
                         help='Time window for return prediction (in days)')
     args = parser.parse_args()
     
-    # Load configuration
+    logger.info(f"开始模型训练过程")
+    logger.info(f"模型类型: {args.model_type}")
+    logger.info(f"模型名称: {args.model_name}")
+    
+    # 加载配置
     config = load_config(args.config_path)
     
-    # Get parameters
+    # 获取参数
     features_dir = config.get('features_directory', './data/processed/features')
     targets_dir = config.get('targets_directory', './data/processed/targets')
     models_dir = config.get('models_directory', './models')
     
-    # Use command line args or config for target window
+    # 使用命令行参数或配置中的目标窗口
     target_window = args.target_window or config.get('target_window', 60)
+    logger.info(f"目标窗口: {target_window}天")
     
-    # File paths
+    # 文件路径
     features_path = os.path.join(features_dir, 'llm_features.csv')
     targets_path = os.path.join(targets_dir, 'stock_targets.csv')
     
-    # Train model
+    logger.info(f"特征文件: {features_path}")
+    logger.info(f"目标文件: {targets_path}")
+    
+    # 训练模型
     model_path, metrics = train_return_prediction_model(
         features_path=features_path,
         targets_path=targets_path,
@@ -611,8 +753,8 @@ def main():
         model_name=args.model_name
     )
     
-    logger.info(f"Model training complete. Model saved to {model_path}")
-    logger.info(f"Model metrics: {metrics}")
+    logger.info(f"模型训练完成。模型保存到 {model_path}")
+    logger.info(f"模型指标: {metrics}")
 
 if __name__ == "__main__":
     main()
