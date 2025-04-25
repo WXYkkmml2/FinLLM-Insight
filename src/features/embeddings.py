@@ -22,11 +22,11 @@ project_root = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(_
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-
+import concurrent.futures
 import json
 import argparse
 import logging
-from pathlib import Path
+from datetime import datetime
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -34,11 +34,6 @@ from tqdm import tqdm
 
 # Text processing and chunking
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-
-# Vector database
-import chromadb
-from chromadb.config import Settings
-from chromadb.utils import embedding_functions
 
 # Configure logging
 logging.basicConfig(
@@ -219,22 +214,18 @@ def create_embedding_function(embedding_model):
         logger.error(f"Failed to create embedding function: {e}")
         raise
 
-def process_reports(text_dir, output_dir, embedding_model, chunk_size=1000, chunk_overlap=200):
-    """
-    Process reports and create embeddings
+def process_reports_parallel(text_dir, output_dir, embedding_model, chunk_size=1000, chunk_overlap=200, max_workers=4, batch_size=100):
+    """使用多线程并行处理报告"""
+    import concurrent.futures
     
-    Args:
-        text_dir (str): Directory containing text reports
-        output_dir (str): Directory to save embeddings
-        embedding_model (str): Name of the embedding model
-        chunk_size (int): Size of each chunk
-        chunk_overlap (int): Overlap between chunks
-        
-    Returns:
-        dict: Processing statistics
-    """
-    # Create ChromaDB client
+    # Delete existing database directory
     db_path = os.path.join(output_dir, "chroma_db")
+    if os.path.exists(db_path):
+        import shutil
+        shutil.rmtree(db_path)
+        logger.info(f"Deleted existing database directory at {db_path}")
+    
+    # Create ChromaDB client
     client = chromadb.PersistentClient(path=db_path)
     
     # Create embedding function
@@ -247,66 +238,71 @@ def process_reports(text_dir, output_dir, embedding_model, chunk_size=1000, chun
             if file.endswith('.txt'):
                 report_files.append(os.path.join(root, file))
     
-    # Process each report
-    stats = {
-        'total_files': len(report_files),
-        'total_chunks': 0,
-        'processed_files': 0,
-        'error_files': 0,
-        'skipped_files': 0
-    }
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_file = {executor.submit(process_single_report, file_path, client, embedding_func, chunk_size, chunk_overlap, batch_size): file_path 
+                         for file_path in report_files}
+        
+        for future in tqdm(concurrent.futures.as_completed(future_to_file), total=len(report_files)):
+            file_path = future_to_file[future]
+            try:
+                result = future.result()
+                # 处理结果...
+            except Exception as e:
+                logger.error(f"处理文件 {file_path} 时出错: {e}")
     
-    # Get unique company codes
-    company_codes = set()
-    for file_path in report_files:
+    # Calculate statistics
+    total_chunks = sum(1 for r in results if r.get("status") == "success")
+    error_count = sum(1 for r in results if r.get("status") == "error")
+    
+    logger.info(f"Processed {len(results)} reports with {total_chunks} successful chunks and {error_count} errors")
+    
+    return results
+
+def process_single_report(file_path, client, embedding_func, chunk_size, chunk_overlap, batch_size=100):
+    """Process a single report file"""
+    try:
+        # Extract company code and year from filename
         file_name = os.path.basename(file_path)
         company_code = file_name.split('_')[0]
-        company_codes.add(company_code)
-    
-    # Delete existing collections
-    for company_code in company_codes:
+        year = file_name.split('_')[1]
+        
+        # Create collection name
         collection_name = f"company_{company_code}"
+        
+        # Check if collection exists and delete it
         try:
             client.delete_collection(collection_name)
-            logger.info(f"Deleted existing collection for {company_code}")
+            logger.info(f"Deleted existing collection {collection_name}")
         except Exception as e:
-            logger.warning(f"Could not delete collection for {company_code}: {e}")
-    
-    for file_path in tqdm(report_files, desc="Processing reports"):
-        try:
-            # Extract company code and year from filename
-            file_name = os.path.basename(file_path)
-            company_code = file_name.split('_')[0]
-            year = file_name.split('_')[1]
+            logger.debug(f"Collection {collection_name} does not exist or could not be deleted: {e}")
+        
+        # Create new collection
+        collection = client.create_collection(name=collection_name, embedding_function=embedding_func)
+        
+        # Load and split text
+        text = load_report_text(file_path)
+        if not text:
+            raise Exception("Failed to load text")
+        
+        chunks = split_text_into_chunks(text, chunk_size, chunk_overlap)
+        
+        # Process chunks in batches
+        for i in range(0, len(chunks), batch_size):
+            batch_chunks = chunks[i:i + batch_size]
+            batch_metadatas = [{"year": year, "company_code": company_code} for _ in batch_chunks]
+            batch_ids = [f"{company_code}_{year}_{j}" for j in range(i, i + len(batch_chunks))]
             
-            # Create collection name
-            collection_name = f"company_{company_code}"
-            
-            # Create new collection
-            collection = client.create_collection(name=collection_name, embedding_function=embedding_func)
-            
-            # Load and split text
-            text = load_report_text(file_path)
-            if not text:
-                raise Exception("Failed to load text")
-            
-            chunks = split_text_into_chunks(text, chunk_size, chunk_overlap)
-            stats['total_chunks'] += len(chunks)
-            
-            # Add chunks to collection
             collection.add(
-                documents=chunks,
-                metadatas=[{"year": year, "company_code": company_code} for _ in chunks],
-                ids=[f"{company_code}_{year}_{i}" for i in range(len(chunks))]
+                documents=batch_chunks,
+                metadatas=batch_metadatas,
+                ids=batch_ids
             )
-            
-            stats['processed_files'] += 1
-            
-        except Exception as e:
-            logger.error(f"Error processing {file_path}: {e}")
-            stats['error_files'] += 1
-    
-    return stats
+        
+        return {"status": "success", "company_code": company_code, "year": year, "chunks": len(chunks)}
+        
+    except Exception as e:
+        logger.error(f"Error processing {file_path}: {e}")
+        return {"status": "error", "file": file_path, "error": str(e)}
 
 def main():
     """Main function to run the embedding generation process"""
@@ -321,39 +317,50 @@ def main():
     # Get parameters
     text_dir = config.get('processed_reports_text_directory', './data/processed/text_reports')
     output_dir = config.get('embeddings_directory', './data/processed/embeddings')
-    embedding_model = config.get('embedding_model', 'BAAI/bge-large-zh-v1.5')
-    chunk_size = config.get('chunk_size', 1000)
-    chunk_overlap = config.get('chunk_overlap', 200)
+    embedding_model = config.get('embedding_model', 'BAAI/bge-small-zh-v1.5')
+    chunk_size = config.get('chunk_size', 2000)
+    chunk_overlap = config.get('chunk_overlap', 100)
+    max_workers = config.get('max_workers', 4)
+    batch_size = config.get('batch_size', 100)
     
-    # Check if Hugging Face API key is set
-    if not os.environ.get("HUGGINGFACE_API_KEY"):
-        logger.error("HUGGINGFACE_API_KEY environment variable is not set")
-        logger.info("Please set your Hugging Face API key using:")
-        logger.info("export HUGGINGFACE_API_KEY='your_api_key_here'")
+    # Get API key from config
+    api_key = config.get('huggingface_api_key')
+    if api_key:
+        os.environ["HUGGINGFACE_API_KEY"] = api_key
+        os.environ["CHROMA_HUGGINGFACE_API_KEY"] = api_key
+    elif not os.environ.get("HUGGINGFACE_API_KEY"):
+        logger.error("HUGGINGFACE_API_KEY not found in config or environment variables")
         sys.exit(1)
-    
-    # Set ChromaDB Hugging Face API key
-    os.environ["CHROMA_HUGGINGFACE_API_KEY"] = os.environ["HUGGINGFACE_API_KEY"]
     
     # Process reports using synchronous method
     try:
-        stats = process_reports(
+        stats = process_reports_parallel(
             text_dir=text_dir,
             output_dir=output_dir,
             embedding_model=embedding_model,
             chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap
+            chunk_overlap=chunk_overlap,
+            max_workers=max_workers,
+            batch_size=batch_size
         )
         
         logger.info(f"Processing completed with stats: {stats}")
         
-        if stats['error_files'] > 0:
-            logger.warning(f"Failed to process {stats['error_files']} files")
+        if stats['error_reports'] > 0:
+            logger.warning(f"Failed to process {stats['error_reports']} files")
             logger.warning("Please check the logs for detailed error messages")
         
     except Exception as e:
         logger.error(f"Error during processing: {e}")
         sys.exit(1)
+
+def optimize_memory_usage(text):
+    """优化内存使用"""
+    # 使用生成器而不是一次性加载所有文本
+    def text_generator(text_path):
+        with open(text_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                yield line
 
 if __name__ == "__main__":
     main()
