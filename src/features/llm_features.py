@@ -7,6 +7,9 @@ This module generates structured features from annual reports using LLM analysis
 """
 
 import os
+# 设置环境变量以解决 tokenizers 的警告
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 import json
 import argparse
 import logging
@@ -448,177 +451,149 @@ For each question, follow the format specified in the instructions. Always inclu
         logger.error(f"Error in batch query for {company_code} {year}: {e}")
         return {key: f"Error: {str(e)}" for key in questions.keys()}
 
-def generate_features(embeddings_dir, output_dir, llm_model, embedding_model, questions_path=None, max_tokens_per_call=12000, incremental=True, config_path='config/config.json'):
+def process_company(company_code, year, report_path, config):
     """
-    Generate features for all companies using LLM analysis with incremental processing
+    Process a single company's report for a specific year
     
     Args:
-        embeddings_dir (str): Directory containing vector database
-        output_dir (str): Directory to save features
-        llm_model (str): LLM model name
-        embedding_model (str): Embedding model name
-        questions_path (str): Path to questions file
-        max_tokens_per_call (int): Maximum tokens per LLM call
-        incremental (bool): Whether to skip already processed entries
-        config_path (str): Path to configuration file
-
+        company_code (str): Company code
+        year (int): Report year
+        report_path (str): Path to the report file
+        config (dict): Configuration parameters
+        
     Returns:
-        pd.DataFrame: Combined features for all companies
+        dict: Features for the company and year
     """
-    # Load configuration to get year range
-    config = load_config(config_path)
-    min_year = config.get('min_year', 2020) # Default to 2020 if not found
-    max_year = config.get('max_year', datetime.now().year) # Default to current year if not found
-    years_to_process = list(range(min_year, max_year + 1)) # Create list of years based on config
+    try:
+        # 初始化特征字典
+        features = {
+            "company_code": company_code,
+            "report_year": year,
+            "analysis_timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        
+        # 加载问题
+        questions = load_questions(config.get('questions_path', 'config/questions.json'))
+        
+        # 连接向量数据库
+        embeddings_dir = config.get('embeddings_directory', './data/processed/embeddings')
+        llm_model = config.get('llm_model', 'gpt-3.5-turbo-16k')
+        embedding_model = config.get('embedding_model', 'BAAI/bge-large-zh-v1.5')
+        max_tokens_per_call = config.get('max_tokens_per_call', 12000)
+        
+        client, embedding_func = connect_to_vector_db(embeddings_dir, embedding_model)
+        
+        # 查询LLM
+        responses = query_llm_batch(
+            client=client,
+            embedding_func=embedding_func,
+            company_code=company_code,
+            year=str(year),
+            questions=questions,
+            llm_model=llm_model,
+            max_tokens_per_call=max_tokens_per_call
+        )
+        
+        # 处理响应
+        for question_key, response in responses.items():
+            try:
+                # 获取问题详情
+                question_data = questions[question_key]
+                question_type = question_data.get("type", "numeric")
+                
+                # 提取结构化数据
+                if question_type == "numeric":
+                    score_range = question_data.get("score_range", [1, 10])
+                    score = extract_score_from_response(response, score_range)
+                    features[f"{question_key}_score"] = score
+                
+                elif question_type == "categorical":
+                    categories = question_data.get("categories", [])
+                    category = extract_category_from_response(response, categories)
+                    features[f"{question_key}_category"] = category
+                
+            except Exception as e:
+                logger.error(f"Error processing response for question {question_key} for {company_code} {year}: {e}")
+                continue
+        
+        return features
+    
+    except Exception as e:
+        logger.error(f"Error processing company {company_code} for year {year}: {e}")
+        return None
 
+def generate_features(reports_dir, output_dir, config_path=None):
+    """
+    Generate features from annual reports using LLM analysis
+    
+    Args:
+        reports_dir (str): Directory containing annual reports
+        output_dir (str): Directory to save generated features
+        config_path (str): Path to configuration file
+    """
+    # Load configuration
+    config = load_config(config_path)
+    
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
     
-    # Check for existing features for incremental processing
-    existing_features = {}
-    features_path = os.path.join(output_dir, "llm_features.csv")
+    # 验证报告目录是否存在
+    if not os.path.exists(reports_dir):
+        logger.error(f"Reports directory not found: {reports_dir}")
+        return None
     
-    if incremental and os.path.exists(features_path):
-        try:
-            existing_df = pd.read_csv(features_path, encoding='utf-8-sig')
-            # Create index of company and year pairs
-            for _, row in existing_df.iterrows():
-                if 'company_code' in row and 'report_year' in row:
-                    # Ensure year is stored as string for consistent key format if needed, but usually int is fine
-                    key = f"{row['company_code']}_{int(row['report_year'])}"
-                    existing_features[key] = True
-            logger.info(f"Found {len(existing_features)} existing feature entries for incremental processing")
-        except Exception as e:
-            logger.error(f"Error loading existing features: {e}")
+    logger.info(f"Scanning reports directory: {reports_dir}")
     
-    # Load questions
-    questions = load_questions(questions_path)
+    # 连接向量数据库
+    client, embedding_func = connect_to_vector_db(reports_dir, config.get('embedding_model', 'BAAI/bge-large-zh-v1.5'))
     
-    # Connect to vector database
-    client, embedding_func = connect_to_vector_db(embeddings_dir, embedding_model)
-    
-    # Get company collections
+    # 获取所有公司集合
     company_collections = get_company_collections(client)
     
     if not company_collections:
         logger.error("No company collections found in vector database")
         return None
     
+    # 处理每个公司
     all_features = []
-    
-    # Process each company
     for collection_name in tqdm(company_collections, desc="Processing companies"):
-        # Extract company code from collection name
-        company_code = collection_name.replace("company_", "")
-        
-        # Get collection
-        collection = client.get_collection(name=collection_name, embedding_function=embedding_func)
-        
-        # Process each year based on the config range
-        for year in years_to_process:
-            # Check if already processed (incremental mode)
-            key = f"{company_code}_{year}"
-            if incremental and key in existing_features:
-                logger.info(f"Skipping already processed {company_code} {year}")
-                continue
-                
-            features = {
-                "company_code": company_code,
-                "report_year": year,
-                "analysis_timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            }
-            
-            responses = {}
-            
-            # Batch processing approach
-            batch_questions = {k: v for k, v in questions.items()}
-            
-            logger.info(f"Batch querying LLM for {company_code} {year} with {len(batch_questions)} questions")
-            # Pass year as string to query_llm_batch as it expects string for ChromaDB metadata query
-            batch_responses = query_llm_batch(
-                client=client,
-                embedding_func=embedding_func,
-                company_code=company_code,
-                year=str(year), # Convert year to string for ChromaDB query
-                questions=batch_questions,
-                llm_model=llm_model,
-                max_tokens_per_call=max_tokens_per_call
-            )
-            
-            # Process batch responses
-            for question_key, response in batch_responses.items():
-                try:
-                    # Get question details
-                    question_data = questions[question_key]
-                    question_type = question_data.get("type", "numeric")
-                    
-                    # Store full response
-                    responses[question_key] = response
-                    
-                    # Extract structured data
-                    if question_type == "numeric":
-                        score_range = question_data.get("score_range", [1, 10])
-                        score = extract_score_from_response(response, score_range)
-                        features[f"{question_key}_score"] = score
-                    
-                    elif question_type == "categorical":
-                        categories = question_data.get("categories", [])
-                        category = extract_category_from_response(response, categories)
-                        features[f"{question_key}_category"] = category
-                        
-                except Exception as e:
-                    logger.error(f"Error processing response for question {question_key} for {company_code} {year}: {e}")
-                    continue
-            
-            # Store full responses in a separate file
-            responses_dir = os.path.join(output_dir, "responses")
-            os.makedirs(responses_dir, exist_ok=True)
-            
-            responses_file = os.path.join(responses_dir, f"{company_code}_{year}_responses.json")
-            with open(responses_file, 'w', encoding='utf-8') as f:
-                json.dump(responses, f, ensure_ascii=False, indent=2)
-            
-            # Add to features list
-            all_features.append(features)
-    
-    # Handle existing features in incremental mode
-    if incremental and os.path.exists(features_path):
         try:
-            # Load existing features
-            existing_df = pd.read_csv(features_path, encoding='utf-8-sig')
+            company_code = collection_name.replace("company_", "")
+            collection = client.get_collection(name=collection_name, embedding_function=embedding_func)
             
-            # Only create new DataFrame if we have new features
-            if all_features:
-                # Create DataFrame with new features
-                new_features_df = pd.DataFrame(all_features)
+            # 获取所有年份
+            years = set()
+            for metadata in collection.get()['metadatas']:
+                if 'year' in metadata:
+                    years.add(int(metadata['year']))
+            
+            for year in years:
+                try:
+                    # 生成特征
+                    features = process_company(company_code, year, None, config)
+                    if features is not None:
+                        all_features.append(features)
                 
-                # Combine with existing features
-                features_df = pd.concat([existing_df, new_features_df], ignore_index=True)
-                
-                logger.info(f"Combined {len(existing_df)} existing and {len(new_features_df)} new feature entries")
-            else:
-                features_df = existing_df
-                logger.info("No new features to add, using existing features")
-                
-        except Exception as e:
-            logger.error(f"Error combining features: {e}")
-            if all_features:
-                features_df = pd.DataFrame(all_features)
-            else:
-                return None
-    else:
-        # No existing features or not in incremental mode
-        if not all_features:
-            logger.error("No features generated for any company")
-            return None
+                except Exception as e:
+                    logger.error(f"Error processing {company_code} {year}: {e}")
         
-        features_df = pd.DataFrame(all_features)
+        except Exception as e:
+            logger.error(f"Failed to process company {company_code}: {e}")
     
-    # Save features
-    features_df.to_csv(features_path, index=False, encoding='utf-8-sig')
+    if not all_features:
+        logger.error("No features generated for any company")
+        return None
     
-    logger.info(f"Generated features for {len(features_df)} reports. Saved to {features_path}")
-    return features_df
+    # Combine all features
+    combined_features = pd.DataFrame(all_features)
+    
+    # Save combined features
+    features_path = os.path.join(output_dir, 'llm_features.csv')
+    combined_features.to_csv(features_path, index=False, encoding='utf-8-sig')
+    
+    logger.info(f"Generated features for {len(combined_features)} reports. Saved to {features_path}")
+    
+    return combined_features
 
 def generate_features_parallel(embeddings_dir, output_dir, llm_model, embedding_model, questions_path=None, max_tokens_per_call=12000, max_workers=4, incremental=True, config_path='config/config.json'):
     """
@@ -858,13 +833,8 @@ def main():
         )
     else:
         generate_features(
-            embeddings_dir=embeddings_dir,
+            reports_dir=embeddings_dir,
             output_dir=output_dir,
-            llm_model=llm_model,
-            embedding_model=embedding_model,
-            questions_path=args.questions_path,
-            max_tokens_per_call=max_tokens_per_call,
-            incremental=args.incremental,
             config_path=args.config_path
         )
 
