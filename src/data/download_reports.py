@@ -10,12 +10,12 @@ import sys
 project_root = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
-    
+import requests    
 import time
 import json
 import argparse
 import logging
-import requests 
+
 from datetime import datetime
 from pathlib import Path
 import re
@@ -64,14 +64,18 @@ def download_file(url, save_path, max_retries=3, initial_delay=2):
     Returns:
         bool: Success status
     """
+    # Use a User-Agent that complies with SEC EDGAR guidelines
+    # Please replace "YourCompanyName" and "YourContact@yourdomain.com" with your actual info
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'User-Agent': 'FinLLM-Insight Project wxy123w@gmail.com', # TODO: Replace with your info
+        'Accept-Encoding': 'gzip, deflate',
+        'Host': 'www.sec.gov'
     }
     
     for attempt in range(max_retries):
         try:
             # Stream the download to handle large files
+            # Added explicit Host header and compliant User-Agent
             with requests.get(url, headers=headers, stream=True, timeout=30) as r:
                 r.raise_for_status()
                 
@@ -459,7 +463,7 @@ def main():
         
         # Set parameters
         save_dir = config.get('annual_reports_html_save_directory', './data/raw/annual_reports')
-        min_year = config.get('min_year', 2018)
+        min_year = config.get('min_year', 2020)
         max_year = config.get('max_year', None)
         delay = config.get('download_delay', 2)
         
