@@ -253,3 +253,35 @@ FinLLM-Insight/
 ## 许可证
 
 本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件
+已经成功将processed文件夹中的targets和text_reports上传到GitHub仓库，您现在可以直接在Google Colab上克隆整个仓库并运行后续步骤了。
+以下是在Colab上完成项目步骤4-7的具体操作步骤：
+
+创建新的Colab笔记本
+克隆您的GitHub仓库：
+
+python!git clone https://github.com/YourUsername/FinLLM-Insight.git
+%cd FinLLM-Insight
+
+安装必要的依赖项：
+
+python!pip install -r requirements.txt
+
+设置OpenAI API密钥：
+
+pythonimport os
+os.environ["OPENAI_API_KEY"] = "your-openai-api-key-here"
+
+运行步骤4至7（跳过已在本地完成的步骤1-3）：
+
+python# 步骤4: 生成嵌入向量
+export HUGGINGFACE_API_KEY='？？'
+!python src/features/embeddings.py
+
+# 步骤5: 使用LLM生成特征
+!python src/features/llm_features.py
+
+# 步骤6: 训练预测模型
+!python src/models/train.py --model_type regression --model_name random_forest
+
+# 步骤7: 生成预测结果
+!python src/models/predict.py
