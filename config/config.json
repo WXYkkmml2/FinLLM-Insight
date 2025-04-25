@@ -21,7 +21,7 @@
     "chunk_size": 2000,
     "chunk_overlap": 100,
     "max_tokens_per_call": 12000,
-    "return_windows": [5, 20, 60, 120],
+    "return_windows": [20, 60, 120, 240],
     "target_window": 60,
     "max_workers": 4,
     "batch_size": 100
