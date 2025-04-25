@@ -140,6 +140,7 @@ python src/data/convert_formats.py
 python src/data/make_targets.py
 
 # 步骤4: 生成文本嵌入向量
+export HUGGINGFACE_API_KEY='？？？'
 python src/features/embeddings.py
 
 # 步骤5: 使用LLM生成结构化特征
