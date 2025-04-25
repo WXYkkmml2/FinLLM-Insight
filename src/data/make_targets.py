@@ -333,10 +333,23 @@ def generate_targets(reports_dir, output_dir, price_start_date=None, price_end_d
         logger.error("No report dates found. Cannot generate targets.")
         return None
     
+    # 验证每个公司的报告文件是否存在
+    valid_reports = {}
+    for stock_code, years in report_dates.items():
+        valid_reports[stock_code] = {}
+        for year, report_date in years.items():
+            # 检查报告文件是否存在
+            report_path = os.path.join(reports_dir, str(year), f"{stock_code}_{year}_annual_report.html")
+            if os.path.exists(report_path):
+                valid_reports[stock_code][year] = report_date
+                logger.info(f"Found valid report for {stock_code} {year}")
+            else:
+                logger.warning(f"No report file found for {stock_code} {year}")
+    
     all_targets = []
     
     # Process each stock
-    for stock_code, years in tqdm(report_dates.items(), desc="Generating targets"):
+    for stock_code, years in tqdm(valid_reports.items(), desc="Generating targets"):
         try:
             # Get price history for this stock
             price_history = get_stock_price_history(
@@ -413,6 +426,24 @@ def generate_targets(reports_dir, output_dir, price_start_date=None, price_end_d
                     # Reset index to include date as a column
                     target_row.reset_index(inplace=True)
                     
+                    # 只保留需要的列
+                    needed_columns = [
+                        'Date', 'stock_code', 'report_year', 'report_date',
+                        'future_return_1d', 'future_up_1d', 'future_category_1d',
+                        'future_return_5d', 'future_up_5d', 'future_category_5d',
+                        'future_return_20d', 'future_up_20d', 'future_category_20d',
+                        'future_return_60d', 'future_up_60d', 'future_category_60d',
+                        'future_return_120d', 'future_up_120d', 'future_category_120d'
+                    ]
+                    
+                    # 确保所有需要的列都存在
+                    for col in needed_columns:
+                        if col not in target_row.columns:
+                            target_row[col] = None
+                    
+                    # 只保留需要的列
+                    target_row = target_row[needed_columns]
+                    
                     all_targets.append(target_row)
                 
                 except Exception as e:
@@ -427,6 +458,26 @@ def generate_targets(reports_dir, output_dir, price_start_date=None, price_end_d
     
     # Combine all targets
     combined_targets = pd.concat(all_targets, ignore_index=True)
+    
+    # 检查列名
+    logger.info(f"Available columns: {combined_targets.columns.tolist()}")
+    
+    # 将元组列名转换为字符串列名
+    combined_targets.columns = [col[0] if isinstance(col, tuple) else col for col in combined_targets.columns]
+    
+    logger.info(f"Converted columns: {combined_targets.columns.tolist()}")
+    
+    # 删除重复的行
+    if 'stock_code' in combined_targets.columns and 'report_year' in combined_targets.columns:
+        combined_targets = combined_targets.drop_duplicates(subset=['stock_code', 'report_year'], keep='first')
+    else:
+        logger.warning("Missing required columns for deduplication. Skipping deduplication step.")
+    
+    # 按股票代码和报告年份排序
+    if 'stock_code' in combined_targets.columns and 'report_year' in combined_targets.columns:
+        combined_targets = combined_targets.sort_values(['stock_code', 'report_year'])
+    else:
+        logger.warning("Missing required columns for sorting. Skipping sorting step.")
     
     # Save combined targets
     targets_path = os.path.join(output_dir, 'stock_targets.csv')
