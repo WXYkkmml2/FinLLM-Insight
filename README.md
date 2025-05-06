@@ -255,7 +255,7 @@ FinLLM-Insight/
 本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件
 -------------
 
-已经成功将processed文件夹中的targets和text_reports上传到GitHub仓库，现在可以直接在Google Colab上克隆整个仓库并运行后续步骤了。
+已经成功将processed文件夹中的targets和text_reports上传到GitHub仓库，现在可以直接在Google Colab上克隆整个仓库并运行后续步骤了。（250年报数据）
 以下是在Colab上完成项目步骤4-7的具体操作步骤：
 
 创建新的Colab笔记本
