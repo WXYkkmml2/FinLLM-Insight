@@ -602,7 +602,24 @@ def predict_returns(features_path, model_path=None, info_path=None, output_dir=N
     except Exception as e:
         logger.error(f"Error in prediction process: {e}")
         return None
-
+def predict_current_returns(model, features_df, model_info=None, current_year=2025):
+    """为当前年份的公司生成未来预测"""
+    
+    # 筛选当前年份的公司
+    current_companies = features_df[features_df['report_year'] == current_year].copy()
+    
+    if current_companies.empty:
+        logger.warning(f"No company data found for year {current_year}")
+        return None
+    
+    # 使用模型进行预测
+    predictions_df = make_predictions(model, current_companies, model_info)
+    
+    # 添加预测时间戳
+    predictions_df['prediction_date'] = datetime.now().strftime("%Y-%m-%d")
+    predictions_df['prediction_type'] = 'future_forecast'
+    
+    return predictions_df
 def main():
     """Main function to run the prediction process"""
     parser = argparse.ArgumentParser(description='Make stock return predictions with trained models')
